@@ -1,0 +1,132 @@
+complexity:
+  LongMethod:
+    allowedLines: 140
+  LongParameterList:
+    allowedConstructorParameters: 14
+    allowedFunctionParameters: 12
+    ignoreDefaultParameters: true
+  TooManyFunctions:
+    allowedFunctionsPerFile: 24
+    allowedFunctionsPerClass: 22
+    allowedFunctionsPerObject: 20
+    ignoreDeprecated: true
+    ignoreOverridden: true
+    ignorePrivate: true
+  CyclomaticComplexMethod:
+    allowedComplexity: 24
+    ignoreSingleWhenExpression: true
+    ignoreSimpleWhenEntries: true
+  ComplexCondition:
+    allowedConditions: 5
+
+style:
+  MagicNumber:
+    ignorePropertyDeclaration: true
+    ignoreCompanionObjectPropertyDeclaration: true
+    ignoreEnums: true
+    ignoreAnnotated: ['Composable']
+    ignoreNumbers: ['-1', '0', '1', '2', '3', '4', '5', '6', '8', '10', '12', '16', '20', '30', '40', '50', '100', '200', '401', '403', '404', '408', '500']
+  WildcardImport:
+    active: false
+  ReturnCount:
+    max: 12
+  MaxLineLength:
+    maxLineLength: 180
+    excludeCommentStatements: true
+  ThrowsCount:
+    max: 4
+  LoopWithTooManyJumpStatements:
+    active: false
+  FunctionOnlyReturningConstant:
+    active: false
+
+exceptions:
+  TooGenericExceptionCaught:
+    active: false
+  SwallowedException:
+    active: false
+
+naming:
+  FunctionNaming:
+    functionPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ignoreAnnotated: ['Composable']
+  MatchingDeclarationName:
+    active: false
+
+comments:
+  UndocumentedPublicClass:
+    active: false
+  UndocumentedPublicFunction:
+    active: false
+  UndocumentedPublicProperty:
+    active: false
+
+ktlint:
+  active: false
+
+Compose:
+  ComposableAnnotationNaming:
+    active: true
+  ComposableNaming:
+    active: true
+  ComposableParamOrder:
+    active: true
+  CompositionLocalAllowlist:
+    active: true
+  CompositionLocalNaming:
+    active: true
+  ContentEmitterReturningValues:
+    active: true
+  ContentTrailingLambda:
+    active: true
+  ContentSlotReused:
+    active: true
+  DefaultsVisibility:
+    active: true
+  LambdaParameterEventTrailing:
+    active: true
+  LambdaParameterInRestartableEffect:
+    active: true
+  Material2:
+    active: false
+  ModifierClickableOrder:
+    active: true
+  ModifierComposed:
+    active: true
+  ModifierMissing:
+    active: true
+    checkModifiersForVisibility: only_public
+  ModifierNaming:
+    active: true
+  ModifierNotUsedAtRoot:
+    active: true
+  ModifierReused:
+    active: true
+  ModifierWithoutDefault:
+    active: true
+  MultipleEmitters:
+    active: true
+  MutableParams:
+    active: true
+  MutableStateAutoboxing:
+    active: true
+  MutableStateParam:
+    active: true
+  ParameterNaming:
+    active: true
+  PreviewAnnotationNaming:
+    active: true
+  PreviewNaming:
+    active: false
+  PreviewPublic:
+    active: true
+  RememberMissing:
+    active: true
+  RememberContentMissing:
+    active: true
+  UnstableCollections:
+    active: false
+  ViewModelForwarding:
+    active: true
+  ViewModelInjection:
+    active: true

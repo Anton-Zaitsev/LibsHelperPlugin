@@ -1,0 +1,77 @@
+<idea-plugin require-restart="true">
+    <id>com.zaycev.libshelper</id>
+    <name>LibsHelper</name>
+    <vendor email="ya.antonio19@gmail.com" url="https://github.com/Anton-Zaitsev/LibsHelperPlugin">Anton Zaycev</vendor>
+    <resource-bundle>messages.LibsHelperBundle</resource-bundle>
+    <description><![CDATA[
+        <p>Suggests stable Gradle library updates and writes the chosen version into the catalog or build file.</p>
+        <p>Reads libraries from <code>gradle/libs.versions.toml</code> and Gradle build files, then
+        recommends the newest regular release. RC, Beta, Alpha, and Snapshot versions are listed
+        separately and are not treated as a replacement for the regular version.</p>
+        <ul>
+            <li>Checks Maven Central, Google Maven, and the Gradle Plugin Portal first</li>
+            <li>Uses a project fallback or private catalog only if the official catalog is unavailable</li>
+            <li>Update writes the stable version; shared catalog keys update the whole group</li>
+            <li>Inlay hints next to declared versions; analytics, sunburst, and a module map</li>
+            <li>Private catalog login, token, or custom header; secrets stay in the IDE Password Safe</li>
+            <li>English and Russian UI, switchable in Settings without restart</li>
+        </ul>
+        <p>Source and issues:
+        <a href="https://github.com/Anton-Zaitsev/LibsHelperPlugin">GitHub</a>.</p>
+        <p>Читает библиотеки Gradle-проекта, подсказывает рабочую (Stable) версию и записывает её
+        в каталог или файл сборки. RC / Beta / Alpha / Snapshot показывает отдельно.</p>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>org.jetbrains.plugins.gradle</depends>
+    <depends optional="true">Git4Idea</depends>
+    <depends optional="true">org.jetbrains.kotlin</depends>
+    <depends optional="true">org.intellij.groovy</depends>
+    <depends optional="true">org.toml.lang</depends>
+    <depends optional="true">com.intellij.modules.androidstudio</depends>
+    <depends optional="true">org.jetbrains.android</depends>
+
+    <dependencies>
+        <module name="intellij.platform.jewel.foundation"/>
+        <module name="intellij.platform.jewel.ui"/>
+        <module name="intellij.platform.jewel.ideLafBridge"/>
+        <module name="intellij.libraries.compose.foundation.desktop"/>
+        <module name="intellij.libraries.skiko"/>
+    </dependencies>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow
+                id="LibsHelper"
+                anchor="right"
+                secondary="false"
+                icon="com.zaycev.libshelper.ide.LibsHelperIcons.ToolWindow"
+                factoryClass="com.zaycev.libshelper.ide.ui.LibsHelperToolWindowFactory"/>
+        <postStartupActivity implementation="com.zaycev.libshelper.ide.LibsHelperStartupActivity"/>
+        <applicationService serviceImplementation="com.zaycev.libshelper.ide.i18n.LibsHelperSettings"/>
+        <notificationGroup id="LibsHelper" displayType="BALLOON"/>
+        <projectConfigurable
+                parentId="tools"
+                id="com.zaycev.libshelper.settings"
+                displayName="LibsHelper"
+                instance="com.zaycev.libshelper.ide.auth.LibsHelperConfigurable"/>
+        <codeInsight.inlayProviderFactory
+                implementation="com.zaycev.libshelper.ide.inlay.LibsHelperInlayHintsProviderFactory"/>
+    </extensions>
+
+    <actions>
+        <action
+                id="com.zaycev.libshelper.Refresh"
+                class="com.zaycev.libshelper.ide.RefreshLibsHelperAction"
+                text="action.refresh.text"
+                description="action.refresh.description">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action
+                id="com.zaycev.libshelper.CheckCurrent"
+                class="com.zaycev.libshelper.ide.CheckInLibsHelperAction"
+                text="action.check.text"
+                description="action.check.description">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>

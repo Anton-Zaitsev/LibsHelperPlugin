@@ -1,0 +1,18 @@
+[versions]
+okhttp = "4.12.0"
+compose-bom = "2025.01.00"
+kotlin = "1.9.24"
+retrofit = "2.11.0"
+
+[libraries]
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+retrofit = { module = "com.squareup.retrofit2:retrofit", version.ref = "okhttp" }
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "compose-bom" }
+compose-ui = { group = "androidx.compose.ui", name = "ui", version.ref = "compose-bom" }
+guava = { group = "com.google.guava", name = "guava", version = "32.1.0-android" }
+
+[bundles]
+network = ["okhttp", "retrofit"]
+
+[plugins]
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }

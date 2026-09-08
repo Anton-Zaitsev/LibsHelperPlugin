@@ -1,0 +1,31 @@
+<h2>1.0.0</h2>
+<p>Initial release of LibsHelper for Android Studio and IntelliJ.</p>
+
+<h3>Library inventory and updates</h3>
+<ul>
+    <li>Reads declared libraries from <code>gradle/libs.versions.toml</code> and Gradle build files</li>
+    <li>Checks Maven Central, Google Maven, and the Gradle Plugin Portal first</li>
+    <li>Uses a project backup or private catalog only when an official catalog does not answer</li>
+    <li>Recommends the newest regular stable version, with an Update action that writes it into the catalog or build file</li>
+    <li>Shows RC, Beta, Alpha, and Snapshot versions separately; they are not treated as a replacement for the regular release</li>
+    <li>Search, an “only with updates” filter, and a full All libraries inventory (including libraries that are already current)</li>
+    <li>Shared catalog versions: one change updates every library that uses the same version key</li>
+    <li>Detects local AAR and JAR files alongside Maven coordinates</li>
+</ul>
+
+<h3>Analytics and sources</h3>
+<ul>
+    <li>Counts for libraries, module uses, outdated libraries, and modules</li>
+    <li>Sunburst of the heaviest third-party libraries</li>
+    <li>Interactive module map (Gradle / Android / JVM / KMP / Wasm / common): zoom, pan, and search that jumps to a module</li>
+    <li>Where we look: official catalogs versus project backup or private sources, with sign-in when a catalog asks for it</li>
+</ul>
+
+<h3>Editor and settings</h3>
+<ul>
+    <li>Inlay hints in version catalogs and build files: the next stable version next to the declaration (click opens LibsHelper)</li>
+    <li>Right-click a library declaration and choose Open in LibsHelper</li>
+    <li>Private catalogs: login, token, or a custom header; secrets stay in the IDE Password Safe</li>
+    <li>English and Russian UI, switchable in Settings without restarting the IDE</li>
+    <li>Check again ignores the cache and queries catalogs from scratch</li>
+</ul>

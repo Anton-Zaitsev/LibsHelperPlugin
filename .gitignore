@@ -1,0 +1,42 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Gradle
+.gradle/
+build/
+
+# Kotlin compiler caches
+.kotlin/
+
+# IntelliJ Platform Gradle Plugin (platform cache, artifacts, sandbox)
+.intellijPlatform/
+
+# Legacy sandbox from older IntelliJ Platform Gradle Plugin versions
+**/idea-sandbox/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# Machine-specific SDK / local Gradle config
+local.properties
+
+# Logs and crash dumps
+*.log
+*.hprof
+hs_err_pid*
+
+# Signing / secrets
+*.jks
+*.keystore
+
+# Qodana (JetBrains plugin template)
+.qodana/
+
+# Gradle Wrapper, version catalog and daemon JVM criteria stay in VCS.
+# Do not add gradle/wrapper/, gradlew, libs.versions.toml or
+# gradle-daemon-jvm.properties here.
