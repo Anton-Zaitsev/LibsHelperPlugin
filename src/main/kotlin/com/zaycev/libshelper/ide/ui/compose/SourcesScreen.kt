@@ -3,13 +3,15 @@ package com.zaycev.libshelper.ide.ui.compose
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -30,7 +32,6 @@ import com.zaycev.libshelper.ide.ui.statusLabel
 import com.zaycev.libshelper.ide.ui.typeLabel
 import org.jetbrains.jewel.ui.component.DefaultButton
 import org.jetbrains.jewel.ui.component.Text
-import kotlinx.collections.immutable.toPersistentList
 
 @Composable
 fun SourcesScreen(
@@ -39,35 +40,40 @@ fun SourcesScreen(
     wide: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val scroll = rememberScrollState()
     val plan = report.scanPlan
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(scroll)
-            .padding(12.dp),
+    val repositories = report.inventory.repositories
+    val entries = remember(plan, repositories) {
+        plan.repositories
+            .map { entry ->
+                val withStatus = repositories
+                    .firstOrNull { it.url == entry.repository.url && it.scope == entry.repository.scope }
+                if (withStatus == null) entry else entry.copy(repository = withStatus)
+            }
+            .distinctBy { it.repository.url to it.repository.scope }
+    }
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(if (wide) 16.dp else 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        ScanSummary(plan)
+        item(key = "summary") { ScanSummary(plan) }
         if (report.metadataFromProxyOnly) {
-            AccentCard(ComposePalette.status(StatusKind.Outdated)) {
-                TitleText(msg("banner.proxyOnly"))
+            item(key = "proxy") {
+                AccentCard(ComposePalette.status(StatusKind.Outdated)) {
+                    TitleText(msg("banner.proxyOnly"))
+                }
             }
         }
         plan.httpProxy?.let { proxy ->
-            MutedText(msg("scan.httpProxy", proxy.host, proxy.port))
+            item(key = "http-proxy") { MutedText(msg("scan.httpProxy", proxy.host, proxy.port)) }
         }
-        if (plan.repositories.isEmpty()) {
-            MutedText(msg("empty.noRepos"))
+        if (entries.isEmpty()) {
+            item(key = "empty") { MutedText(msg("empty.noRepos")) }
         } else {
-            val entries = plan.repositories
-                .map { entry ->
-                    val withStatus = report.inventory.repositories
-                        .firstOrNull { it.url == entry.repository.url && it.scope == entry.repository.scope }
-                    if (withStatus == null) entry else entry.copy(repository = withStatus)
-                }
-                .distinctBy { it.repository.url to it.repository.scope }
-            ResponsiveGrid(items = entries.toPersistentList(), wide = wide) { entry ->
+            items(
+                items = entries,
+                key = { entry -> entry.repository.url + entry.repository.scope.name },
+            ) { entry ->
                 RepositoryCard(project, entry)
             }
         }

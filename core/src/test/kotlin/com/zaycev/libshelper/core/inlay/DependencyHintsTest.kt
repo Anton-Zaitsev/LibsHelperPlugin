@@ -4,6 +4,8 @@ import com.zaycev.libshelper.core.inventory.catalogToDependencies
 import com.zaycev.libshelper.core.inventory.mergeUniqueDependencies
 import com.zaycev.libshelper.core.inventory.parseCatalog
 import com.zaycev.libshelper.core.inventory.parseGradleScript
+import com.zaycev.libshelper.core.settings.BuildSettingAdvice
+import com.zaycev.libshelper.core.settings.BuildSettingRole
 import com.zaycev.libshelper.core.model.ChannelOffer
 import com.zaycev.libshelper.core.model.Coordinates
 import com.zaycev.libshelper.core.model.DeclaredDependency
@@ -275,6 +277,62 @@ class DependencyHintsTest {
     }
 
     @Test
+    fun gradleUsageWithoutVersionLine_doesNotDuplicateVersionBubble() {
+        val catalog = DeclaredDependency(
+            coordinates = Coordinates("io.github.alexzhirkevich", "qrose"),
+            requestedVersion = "1.1.2",
+            catalogAlias = "qrose",
+            versionRef = "qrose",
+            configuration = "implementation",
+            module = ":",
+            source = DependencySource.Toml,
+            catalogPath = "gradle/libs.versions.toml",
+            catalogLine = 4,
+            catalogVersionLine = 2,
+        )
+        val usage = catalog.copy(
+            module = ":app",
+            source = DependencySource.KotlinDsl,
+            catalogVersionLine = null,
+            usagePath = "app/build.gradle.kts",
+            usageLine = 12,
+        )
+        val hints = dependencyHints(
+            reportOf(listOf(catalog, usage), listOf(advice(catalog, outdated = true, recommended = "1.3.0"))),
+        )
+        val toml = hints.filter { it.relativePath == "gradle/libs.versions.toml" }
+        assertEquals(1, toml.size)
+        assertEquals(2, toml.single().line)
+        assertEquals("1.3.0", toml.single().recommendedVersion)
+        assertEquals(1, hints.count { it.relativePath == "app/build.gradle.kts" })
+    }
+
+    @Test
+    fun hintsOnCurrentText_keepsOneBubbleWhenAliasMatchesVersionKey() {
+        val file = """
+            [versions]
+            qrose = "1.1.2"
+            [libraries]
+            qrose = { module = "io.github.alexzhirkevich:qrose", version.ref = "qrose" }
+        """.trimIndent()
+        val onVersion = DependencyHint(
+            relativePath = "gradle/libs.versions.toml",
+            line = 2,
+            needle = "qrose",
+            coordinatesKey = "io.github.alexzhirkevich:qrose",
+            kind = DependencyHintKind.Outdated,
+            currentVersion = "1.1.2",
+            recommendedVersion = "1.3.0",
+            catalogAlias = "qrose",
+        )
+        val onLibrary = onVersion.copy(line = 4)
+        val placed = hintsOnCurrentText(listOf(onVersion, onLibrary), file.lines())
+        assertEquals(1, placed.size)
+        assertEquals(2, placed.single().line)
+        assertEquals("1.3.0", placed.single().recommendedVersion)
+    }
+
+    @Test
     fun bindHintToCurrentText_followsMovedVersionKey() {
         val stale = DependencyHint(
             relativePath = "gradle/libs.versions.toml",
@@ -320,6 +378,80 @@ class DependencyHintsTest {
         val hints = dependencyHints(reportOf(listOf(declared), listOf(advice(declared, outdated = true, recommended = "1.14.0"))))
         assertTrue(hints.any { it.relativePath == "gradle/libs.versions.toml" && it.needle == "androidx-activity" && it.line == 2 }, hints.toString())
         assertTrue(hints.any { it.relativePath == "app/build.gradle.kts" }, hints.toString())
+    }
+
+    @Test
+    fun sdkCatalogKeys_showBubblesForCompileTargetAndNdkOnly() {
+        val toml = """
+            [versions]
+            android-compileSdk = "34"
+            android-minSdk = "28"
+            android-targetSdk = "35"
+            android-ndk = "29.0.14206865"
+            jvm-toolchain = "21"
+        """.trimIndent()
+        val catalog = parseCatalog(toml)
+        val base = reportOf(emptyList(), emptyList())
+        val report = base.copy(
+            inventory = base.inventory.copy(
+                versionSources = mapOf("gradle/libs.versions.toml" to toml),
+                catalogVersions = catalog.versions,
+            ),
+            buildSettings = persistentListOf(
+                BuildSettingAdvice(
+                    key = "android-compileSdk",
+                    current = "34",
+                    role = BuildSettingRole.CompileSdk,
+                    suggestions = listOf("37"),
+                    note = null,
+                    trackedVersion = "37",
+                ),
+                BuildSettingAdvice(
+                    key = "android-minSdk",
+                    current = "28",
+                    role = BuildSettingRole.MinSdk,
+                    suggestions = emptyList(),
+                    note = "API 28 is Android 9.",
+                    trackedVersion = null,
+                ),
+                BuildSettingAdvice(
+                    key = "android-targetSdk",
+                    current = "35",
+                    role = BuildSettingRole.TargetSdk,
+                    suggestions = listOf("37"),
+                    note = null,
+                    trackedVersion = "37",
+                ),
+                BuildSettingAdvice(
+                    key = "android-ndk",
+                    current = "29.0.14206865",
+                    role = BuildSettingRole.Ndk,
+                    suggestions = emptyList(),
+                    note = null,
+                    trackedVersion = "29.0.14206865",
+                ),
+                BuildSettingAdvice(
+                    key = "jvm-toolchain",
+                    current = "21",
+                    role = BuildSettingRole.JvmToolchain,
+                    suggestions = listOf("25"),
+                    note = null,
+                    trackedVersion = "25",
+                ),
+            ),
+        )
+        val hints = hintsOnCurrentText(dependencyHints(report), toml.lines())
+        val compile = hints.single { it.needle == "android-compileSdk" }
+        assertEquals(catalog.versionLines["android-compileSdk"], compile.line)
+        assertEquals(DependencyHintKind.Outdated, compile.kind)
+        assertEquals("37", compile.recommendedVersion)
+        val target = hints.single { it.needle == "android-targetSdk" }
+        assertEquals(catalog.versionLines["android-targetSdk"], target.line)
+        assertEquals("37", target.recommendedVersion)
+        val ndk = hints.single { it.needle == "android-ndk" }
+        assertEquals(DependencyHintKind.Current, ndk.kind)
+        assertEquals(null, ndk.recommendedVersion)
+        assertTrue(hints.none { it.needle == "android-minSdk" || it.needle == "jvm-toolchain" })
     }
 
     private fun reportOf(

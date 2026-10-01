@@ -63,4 +63,20 @@ class CatalogParserTest {
         assertEquals("agp", plugin.versionRef)
         assertEquals("8.7.0", plugin.version)
     }
+
+    @Test
+    fun richVersionKeepsNestedBracesAndSingleQuotedBundles() {
+        val catalog = parseCatalog(
+            """
+            [versions]
+            okhttp = { strictly = "4.12.0", reject = ["1.0", "2.0"] }
+            [libraries]
+            okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+            [bundles]
+            net = ['okhttp']
+            """.trimIndent(),
+        )
+        assertEquals("4.12.0", catalog.versions["okhttp"])
+        assertEquals(listOf("okhttp"), catalog.bundles["net"])
+    }
 }

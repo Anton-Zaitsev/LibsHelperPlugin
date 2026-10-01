@@ -34,7 +34,32 @@ fun parseCatalog(text: String): CatalogParseResult {
         .getOrElse { CatalogParseResult(emptyMap(), emptyList(), emptyList(), emptyMap(), it.message) }
 }
 
+internal fun collapseMultilineStrings(text: String): String {
+    val out = StringBuilder(text.length)
+    var index = 0
+    while (index < text.length) {
+        if (text.startsWith("\"\"\"", index) || text.startsWith("'''", index)) {
+            val quote = text.substring(index, index + 3)
+            val end = text.indexOf(quote, index + 3)
+            if (end < 0) {
+                out.append(text.substring(index))
+                break
+            }
+            val span = text.substring(index, end + 3)
+            val body = text.substring(index + 3, end).trim().replace("\"", "\\\"")
+            out.append('"').append(body.replace('\n', ' ')).append('"')
+            repeat(span.count { it == '\n' }) { out.append('\n') }
+            index = end + 3
+        } else {
+            out.append(text[index])
+            index++
+        }
+    }
+    return out.toString()
+}
+
 private fun parseCatalogInternal(text: String): CatalogParseResult {
+    val source = collapseMultilineStrings(text)
     val versions = linkedMapOf<String, String>()
     val versionLines = linkedMapOf<String, Int>()
     val libraries = mutableListOf<CatalogLibrary>()
@@ -55,7 +80,7 @@ private fun parseCatalogInternal(text: String): CatalogParseResult {
         tableFields.clear()
     }
 
-    text.lines().forEachIndexed { index, raw ->
+    source.lines().forEachIndexed { index, raw ->
         val line = stripTomlComment(raw).trim()
         if (line.isEmpty()) return@forEachIndexed
         val sectionMatch = SECTION.matchEntire(line)
@@ -74,20 +99,20 @@ private fun parseCatalogInternal(text: String): CatalogParseResult {
         val at = index + 1
         when (section) {
             "versions" -> parseVersionEntry(line)?.let { parsed ->
-                versions[parsed.first] = parsed.second
-                versionLines[parsed.first] = at
+                versions[parsed.key] = parsed.value
+                versionLines[parsed.key] = at
             }
             "libraries" -> if (tableAlias != null) {
-                parseFieldLine(line)?.let { tableFields[it.first] = it.second }
+                parseFieldLine(line)?.let { tableFields[it.key] = it.value }
             } else {
                 parseLibraryLine(line, at)?.let { libraries += it }
             }
             "plugins" -> if (tableAlias != null) {
-                parseFieldLine(line)?.let { tableFields[it.first] = it.second }
+                parseFieldLine(line)?.let { tableFields[it.key] = it.value }
             } else {
                 parsePluginLine(line, at)?.let { plugins += it }
             }
-            "bundles" -> parseBundleLine(line)?.let { bundles[it.first] = it.second }
+            "bundles" -> parseBundleLine(line)?.let { bundles[it.alias] = it.libraries }
         }
     }
     flushTable()
@@ -109,6 +134,30 @@ private fun parseCatalogInternal(text: String): CatalogParseResult {
     )
 }
 
+data class CatalogVersionSite(
+    val path: String,
+    val line: Int,
+)
+
+fun catalogVersionSites(sources: Map<String, String>): Map<String, CatalogVersionSite> {
+    val sites = linkedMapOf<String, CatalogVersionSite>()
+    val paths = sources.keys.sortedWith(compareBy<String> { catalogFileRank(it) }.thenBy { it })
+    for (path in paths) {
+        if (!path.endsWith(".toml")) continue
+        val text = sources[path] ?: continue
+        for ((key, line) in parseCatalog(text).versionLines) {
+            sites.putIfAbsent(key, CatalogVersionSite(path, line))
+        }
+    }
+    return sites
+}
+
+private fun catalogFileRank(path: String): Int = when {
+    path.endsWith("libs.versions.toml") -> 0
+    path.endsWith(".versions.toml") -> 1
+    else -> 2
+}
+
 fun catalogToDependencies(
     catalog: CatalogParseResult,
     module: String,
@@ -123,7 +172,7 @@ fun catalogToDependencies(
             configuration = "implementation",
             module = module,
             source = DependencySource.Toml,
-            isBom = lib.coordinates.artifact.contains("bom", ignoreCase = true),
+            isBom = isBomArtifact(lib.coordinates.artifact),
             catalogPath = catalogPath,
             catalogLine = lib.line,
             catalogVersionLine = lib.versionRef?.let { catalog.versionLines[it] },
@@ -161,42 +210,70 @@ fun catalogVersionKey(accessor: String): List<String> {
     return listOf(dotted, hyphen, dotted.replace('-', '.')).distinct()
 }
 
-fun resolveCatalogVersion(catalog: CatalogParseResult?, accessor: String): Pair<String, String>? {
+data class CatalogAssignment(
+    val key: String,
+    val value: String,
+)
+
+data class CatalogBundleEntry(
+    val alias: String,
+    val libraries: List<String>,
+)
+
+fun resolveCatalogVersion(catalog: CatalogParseResult?, accessor: String): CatalogAssignment? {
     if (catalog == null) return null
     for (key in catalogVersionKey(accessor)) {
-        catalog.versions[key]?.let { return key to it }
+        catalog.versions[key]?.let { return CatalogAssignment(key, it) }
     }
     val normalized = accessor.replace('-', '.')
-    val found = catalog.versions.entries.firstOrNull { (key, _) ->
-        key.replace('-', '.').equals(normalized, ignoreCase = true)
+    val found = catalog.versions.entries.firstOrNull { entry ->
+        entry.key.replace('-', '.').equals(normalized, ignoreCase = true)
     } ?: return null
-    return found.key to found.value
+    return CatalogAssignment(found.key, found.value)
 }
 
 internal fun stripTomlComment(raw: String): String {
-    var inDouble = false
-    var inSingle = false
+    var quote: Char? = null
+    var escaped = false
     for (index in raw.indices) {
         val char = raw[index]
-        when {
-            char == '"' && !inSingle -> inDouble = !inDouble
-            char == '\'' && !inDouble -> inSingle = !inSingle
-            char == '#' && !inDouble && !inSingle -> return raw.substring(0, index)
+        if (quote != null) {
+            if (quote == '"' && escaped) {
+                escaped = false
+                continue
+            }
+            if (quote == '"' && char == '\\') {
+                escaped = true
+                continue
+            }
+            if (char == quote) quote = null
+            continue
+        }
+        when (char) {
+            '"' -> quote = '"'
+            '\'' -> quote = '\''
+            '#' -> return raw.substring(0, index)
         }
     }
     return raw
 }
 
+internal fun isBomArtifact(artifact: String): Boolean {
+    val name = artifact.lowercase()
+    return name == "bom" || name.endsWith("-bom") || name.endsWith(".bom")
+}
+
 private val SECTION = Regex("""^\[([a-zA-Z0-9._-]+)]$""")
 private val ASSIGNMENT = Regex("""^([A-Za-z0-9._-]+)\s*=\s*(.+)$""")
 private val QUOTED = Regex("""^(["'])([^"']*)\1$""")
+private val BUNDLE_ITEM = Regex("""["']([^"']+)["']""")
 
-private fun parseVersionEntry(line: String): Pair<String, String>? {
+private fun parseVersionEntry(line: String): CatalogAssignment? {
     val match = ASSIGNMENT.matchEntire(line) ?: return null
     val key = match.groupValues[1]
     val body = match.groupValues[2].trim()
     val version = quotedValue(body) ?: richVersionValue(body) ?: return null
-    return key to version
+    return CatalogAssignment(key, version)
 }
 
 private fun parseLibraryLine(line: String, at: Int): CatalogLibrary? {
@@ -259,17 +336,17 @@ private fun parseCompactLibrary(alias: String, gav: String, at: Int): CatalogLib
     return CatalogLibrary(alias, Coordinates(parts[0], parts[1]), version, versionRef = null, at)
 }
 
-private fun parseBundleLine(line: String): Pair<String, List<String>>? {
+private fun parseBundleLine(line: String): CatalogBundleEntry? {
     val alias = line.substringBefore('=').trim()
     val body = line.substringAfter('=', "").trim()
-    val items = Regex(""""([^"]+)"""").findAll(body).map { it.groupValues[1] }.toList()
+    val items = BUNDLE_ITEM.findAll(body).map { it.groupValues[1] }.toList()
     if (alias.isEmpty() || items.isEmpty()) return null
-    return alias to items
+    return CatalogBundleEntry(alias, items)
 }
 
-private fun parseFieldLine(line: String): Pair<String, String>? {
+private fun parseFieldLine(line: String): CatalogAssignment? {
     val match = ASSIGNMENT.matchEntire(line) ?: return null
-    return match.groupValues[1] to match.groupValues[2].trim()
+    return CatalogAssignment(match.groupValues[1], match.groupValues[2].trim())
 }
 
 private fun scalarField(fields: Map<String, String>, key: String): String? {
@@ -306,15 +383,14 @@ private fun versionRefOf(fields: Map<String, String>): String? {
 }
 
 private fun nestedTable(body: String, name: String?): String? {
-    if (name == null) {
-        val trimmed = body.trim()
-        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-            return trimmed.removePrefix("{").removeSuffix("}").trim()
-        }
-        return null
+    val open = if (name == null) {
+        body.indexOf('{')
+    } else {
+        Regex("""\b${Regex.escape(name)}\s*=\s*\{""").find(body)?.range?.last ?: return null
     }
-    val match = Regex("""\b${Regex.escape(name)}\s*=\s*\{([^}]*)}""").find(body) ?: return null
-    return match.groupValues[1].trim()
+    if (open < 0) return null
+    val close = matchingBrace(body, open) ?: return null
+    return body.substring(open + 1, close).trim()
 }
 
 private fun richVersionValue(body: String): String? {

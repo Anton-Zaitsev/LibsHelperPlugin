@@ -20,7 +20,7 @@ internal object Git4IdeaSilentAuth {
 
     fun silentAuth(project: Project, gitUrl: String): RepositoryAuth? {
         fromProviders(project, gitUrl)?.let { return it }
-        return fromPasswordSafe(gitUrl)
+        return fromPasswordSafe(project, gitUrl)
     }
 
     private fun fromProviders(project: Project, gitUrl: String): RepositoryAuth? {
@@ -33,12 +33,14 @@ internal object Git4IdeaSilentAuth {
         return null
     }
 
-    private fun fromPasswordSafe(gitUrl: String): RepositoryAuth? {
+    private fun fromPasswordSafe(project: Project, gitUrl: String): RepositoryAuth? {
         val host = hostOf(gitUrl) ?: return null
         val keys = listOf(gitUrl, host).distinct()
         for (key in keys) {
             val stored = runCatching {
-                PasswordSafe.instance.get(CredentialAttributes(generateServiceName("Git HTTP", key), key))
+                blockingCredentials(project) {
+                    PasswordSafe.instance.get(CredentialAttributes(generateServiceName("Git HTTP", key), key))
+                }
             }.getOrNull() ?: continue
             val auth = studioGitAuthOf(stored.userName, stored.getPasswordAsString()) ?: continue
             return auth

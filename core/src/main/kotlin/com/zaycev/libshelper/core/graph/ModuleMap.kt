@@ -54,72 +54,117 @@ data class ModuleMap(
 
 private const val X_GAP = GraphMetrics.X_GAP
 private const val Y_GAP = GraphMetrics.Y_GAP
+private const val HALF = 0.5f
 
-fun layoutModuleMap(graph: ModuleGraph): ModuleMap {
+fun layoutModuleMap(graph: ModuleGraph, cardWidths: FloatArray? = null): ModuleMap {
     if (graph.nodes.isEmpty()) return ModuleMap.Empty
-    val ids = HashSet<String>(graph.nodes.size)
-    graph.nodes.forEach { ids += it.id }
-    val children = HashMap<String, MutableList<String>>()
-    graph.nodes.forEach { node ->
-        val parent = node.parentId ?: return@forEach
-        if (parent in ids) {
-            children.getOrPut(parent) { ArrayList() }.add(node.id)
-        }
+    val count = graph.nodes.size
+    val indexById = HashMap<String, Int>(count)
+    graph.nodes.forEachIndexed { index, node -> indexById[node.id] = index }
+    val parentOf = IntArray(count) { index ->
+        val parent = graph.nodes[index].parentId?.let { indexById[it] } ?: return@IntArray ORPHAN
+        if (parent == index) ORPHAN else parent
     }
-    children.values.forEach { list ->
-        list.sortWith(compareBy({ '#' in it }, { it }))
+    val order = siblingOrder(count) { index ->
+        val id = graph.nodes[index].id
+        if ('#' in id) id else " $id"
     }
-    val placed = HashMap<String, Pair<Float, Float>>(graph.nodes.size)
-    val depths = HashMap<String, Int>(graph.nodes.size)
-    var cursor = 0f
-    val roots = graph.nodes.filter { node ->
-        node.parentId == null || node.parentId !in ids
-    }.sortedBy { it.id }
-    for (root in roots) {
-        cursor += layoutTree(root.id, cursor, 0, children, placed, depths) + X_GAP
-    }
-    graph.nodes.forEach { node ->
-        if (node.id !in placed) {
-            placed[node.id] = cursor to 0f
-            depths[node.id] = 0
-            cursor += X_GAP
-        }
-    }
-    val nodes = graph.nodes.map { node ->
-        val point = placed.getValue(node.id)
+    val widths = resolvedWidths(count, cardWidths)
+    val place = tidyPlace(count, parentOf, widths, order)
+    val nodes = graph.nodes.mapIndexed { index, node ->
         PlacedNode(
             id = node.id,
             label = node.label,
             kind = node.kind,
-            x = point.first,
-            y = point.second,
-            depth = depths[node.id] ?: 0,
+            x = place.x[index],
+            y = place.y[index],
+            depth = place.depth[index],
             parentId = node.parentId,
             pathLabel = modulePathLabel(node.id, node.parentId),
         )
     }
-    val indexById = HashMap<String, Int>(nodes.size)
-    nodes.forEachIndexed { index, node -> indexById[node.id] = index }
     val links = graph.links.mapNotNull { link ->
         val from = indexById[link.fromId] ?: return@mapNotNull null
         val to = indexById[link.toId] ?: return@mapNotNull null
         PlacedLink(from, to, link.kind)
     }
+    return bounded(nodes, links, indexById, widths)
+}
+
+fun cardWidthForLabel(labelWidth: Float, chrome: Float): Float {
+    if (!labelWidth.isFinite() || labelWidth <= 0f) return GraphMetrics.CARD_W
+    val width = chrome + labelWidth
+    if (!width.isFinite()) return GraphMetrics.CARD_W
+    return width.coerceAtLeast(GraphMetrics.CARD_W)
+}
+
+fun spreadCards(map: ModuleMap, cardWidths: FloatArray): ModuleMap {
+    if (map.nodes.isEmpty()) return map
+    val count = map.nodes.size
+    val parentOf = IntArray(count) { index ->
+        val parent = map.nodes[index].parentId?.let { map.indexById[it] } ?: return@IntArray ORPHAN
+        if (parent == index) ORPHAN else parent
+    }
+    val order = siblingOrder(count) { map.nodes[it].x }
+    val widths = resolvedWidths(count, cardWidths)
+    val place = tidyPlace(count, parentOf, widths, order)
+    val nodes = map.nodes.mapIndexed { index, node ->
+        node.copy(x = place.x[index], y = place.y[index], depth = place.depth[index])
+    }
+    return bounded(nodes, map.links, map.indexById, widths)
+}
+
+private fun siblingOrder(count: Int, key: (Int) -> Comparable<*>): IntArray {
+    val order = IntArray(count)
+    val ranked = (0 until count).sortedWith { left, right ->
+        val compared = compareValues(key(left), key(right))
+        if (compared != 0) compared else left - right
+    }
+    ranked.forEachIndexed { position, index -> order[index] = position }
+    return order
+}
+
+private fun resolvedWidths(count: Int, cardWidths: FloatArray?): FloatArray =
+    FloatArray(count) { index -> resolvedWidth(cardWidths?.getOrNull(index) ?: GraphMetrics.CARD_W) }
+
+private fun bounded(
+    nodes: List<PlacedNode>,
+    links: List<PlacedLink>,
+    indexById: Map<String, Int>,
+    widths: FloatArray,
+): ModuleMap {
+    var minX = Float.POSITIVE_INFINITY
+    var minY = Float.POSITIVE_INFINITY
+    var maxX = Float.NEGATIVE_INFINITY
+    var maxY = Float.NEGATIVE_INFINITY
+    nodes.forEachIndexed { index, node ->
+        val halfW = resolvedWidth(widths.getOrElse(index) { GraphMetrics.CARD_W }) * HALF
+        val halfH = GraphMetrics.CARD_H * HALF
+        if (node.x - halfW < minX) minX = node.x - halfW
+        if (node.x + halfW > maxX) maxX = node.x + halfW
+        if (node.y - halfH < minY) minY = node.y - halfH
+        if (node.y + halfH > maxY) maxY = node.y + halfH
+    }
     return ModuleMap(
         nodes = nodes.toPersistentList(),
         links = links.toPersistentList(),
-        minX = nodes.minOf { it.x } - X_GAP,
-        minY = nodes.minOf { it.y } - Y_GAP,
-        maxX = nodes.maxOf { it.x } + X_GAP,
-        maxY = nodes.maxOf { it.y } + Y_GAP,
+        minX = minX - X_GAP,
+        minY = minY - Y_GAP,
+        maxX = maxX + X_GAP,
+        maxY = maxY + Y_GAP,
         indexById = indexById.toPersistentMap(),
     )
 }
 
+private fun resolvedWidth(cardWidth: Float): Float =
+    cardWidth.takeIf { it.isFinite() && it > 0f } ?: GraphMetrics.CARD_W
+
+private const val ORPHAN = -1
+
 fun searchModuleIndices(map: ModuleMap, query: String): ImmutableList<Int> {
     val needle = query.trim().lowercase()
     if (needle.isEmpty() || map.nodes.isEmpty()) return persistentListOf()
-    val ranked = ArrayList<Pair<Int, Int>>(16)
+    val ranked = ArrayList<SearchHit>(16)
     map.nodes.forEachIndexed { index, node ->
         val id = node.id.lowercase()
         val label = node.label.lowercase()
@@ -130,10 +175,10 @@ fun searchModuleIndices(map: ModuleMap, query: String): ImmutableList<Int> {
             id.contains(needle) || label.contains(needle) || path.contains(needle) -> 2
             else -> return@forEachIndexed
         }
-        ranked += index to rank
+        ranked += SearchHit(index, rank)
     }
-    ranked.sortWith(compareBy({ it.second }, { map.nodes[it.first].id }))
-    return ranked.map { it.first }.toPersistentList()
+    ranked.sortWith(compareBy({ it.rank }, { map.nodes[it.index].id }))
+    return ranked.map { it.index }.toPersistentList()
 }
 
 fun expandVisibleKmpChildren(map: ModuleMap, visible: MutableSet<Int>) {
@@ -168,30 +213,3 @@ fun relatedNodeIds(map: ModuleMap, id: String?): ImmutableSet<String> {
     return out.toPersistentSet()
 }
 
-private fun layoutTree(
-    id: String,
-    left: Float,
-    depth: Int,
-    children: Map<String, List<String>>,
-    placed: MutableMap<String, Pair<Float, Float>>,
-    depths: MutableMap<String, Int>,
-): Float {
-    depths[id] = depth
-    val kids = children[id].orEmpty()
-    if (kids.isEmpty()) {
-        val x = left + X_GAP / 2f
-        placed[id] = x to depth * Y_GAP
-        return X_GAP
-    }
-    var childLeft = left
-    val widths = FloatArray(kids.size)
-    kids.forEachIndexed { index, child ->
-        val width = layoutTree(child, childLeft, depth + 1, children, placed, depths)
-        widths[index] = width
-        childLeft += width
-    }
-    val total = widths.sum().coerceAtLeast(X_GAP)
-    val x = left + total / 2f
-    placed[id] = x to depth * Y_GAP
-    return total
-}

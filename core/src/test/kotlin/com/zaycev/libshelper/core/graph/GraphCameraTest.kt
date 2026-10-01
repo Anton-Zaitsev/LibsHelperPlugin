@@ -20,9 +20,17 @@ class GraphCameraTest {
         val before = worldFromScreen(pivotX, pivotY, viewW, viewH, camX, camY, scale)
         val zoomed = zoomCamera(pivotX, pivotY, viewW, viewH, camX, camY, scale, 2f)
         val after = worldFromScreen(pivotX, pivotY, viewW, viewH, zoomed.x, zoomed.y, zoomed.scale)
-        assertEquals(before.first, after.first, absoluteTolerance = TOLERANCE)
-        assertEquals(before.second, after.second, absoluteTolerance = TOLERANCE)
+        assertEquals(before.x, after.x, absoluteTolerance = TOLERANCE)
+        assertEquals(before.y, after.y, absoluteTolerance = TOLERANCE)
         assertEquals(2f, zoomed.scale, absoluteTolerance = TOLERANCE)
+    }
+
+    @Test
+    fun nanScrollDoesNotProduceNanScale() {
+        assertEquals(1f, zoomFactorFromScroll(Float.NaN))
+        val zoomed = zoomCamera(10f, 10f, 200f, 100f, 0f, 0f, Float.NaN, Float.POSITIVE_INFINITY)
+        assertTrue(zoomed.scale.isFinite())
+        assertTrue(zoomed.scale <= GraphMetrics.MAX_SCALE)
     }
 
     @Test
@@ -39,8 +47,8 @@ class GraphCameraTest {
         val cam = fitCamera(0f, 0f, 100f, 50f, 200f, 100f)
         val topLeft = screenFromWorld(0f, 0f, 200f, 100f, cam.x, cam.y, cam.scale)
         val bottomRight = screenFromWorld(100f, 50f, 200f, 100f, cam.x, cam.y, cam.scale)
-        assertTrue(topLeft.first >= 0f && topLeft.second >= 0f)
-        assertTrue(bottomRight.first <= 200f && bottomRight.second <= 100f)
+        assertTrue(topLeft.x >= 0f && topLeft.y >= 0f)
+        assertTrue(bottomRight.x <= 200f && bottomRight.y <= 100f)
         assertEquals(50f, cam.x, absoluteTolerance = TOLERANCE)
         assertEquals(25f, cam.y, absoluteTolerance = TOLERANCE)
     }
@@ -63,12 +71,19 @@ class GraphCameraTest {
         val childY = GraphMetrics.Y_GAP
         val path = cardConnector(parentX, parentY, childX, childY)
         val halfH = GraphMetrics.CARD_H / 2f
-        assertEquals(parentY + halfH, path.first().second, absoluteTolerance = TOLERANCE)
-        assertEquals(childY - halfH, path.last().second, absoluteTolerance = TOLERANCE)
+        assertEquals(parentY + halfH, path.first().y, absoluteTolerance = TOLERANCE)
+        assertEquals(childY - halfH, path.last().y, absoluteTolerance = TOLERANCE)
         path.forEach { point ->
-            assertTrue(point.second >= parentY + halfH - TOLERANCE)
-            assertTrue(point.second <= childY - halfH + TOLERANCE)
+            assertTrue(point.y >= parentY + halfH - TOLERANCE)
+            assertTrue(point.y <= childY - halfH + TOLERANCE)
         }
+    }
+
+    @Test
+    fun connectorStopsAtEachCardEdge() {
+        val path = cardConnector(0f, 0f, 400f, 0f, fromHalfW = 100f, toHalfW = 80f)
+        assertEquals(100f, path.first().x, absoluteTolerance = TOLERANCE)
+        assertEquals(320f, path.last().x, absoluteTolerance = TOLERANCE)
     }
 
     @Test
@@ -127,6 +142,38 @@ class GraphCameraTest {
         assertEquals(GraphMetrics.FOCUS_SCALE, far.scale, absoluteTolerance = TOLERANCE)
         val close = focusCamera(40f, 80f, 2f)
         assertEquals(2f, close.scale, absoluteTolerance = TOLERANCE)
+    }
+
+    @Test
+    fun exportCameraFillsTheBitmapAtTheRequestedDetail() {
+        val minX = -20f
+        val minY = 10f
+        val maxX = 980f
+        val maxY = 410f
+        val frame = pngFrame(
+            worldW = maxX - minX,
+            worldH = maxY - minY,
+            requestedScale = 4f,
+            maxSide = 20_000,
+            maxPixels = 40_000_000,
+        )
+        val cam = exportCamera(minX, minY, maxX, maxY, frame.pixelScale)
+        val topLeft = screenFromWorld(minX, minY, frame.width.toFloat(), frame.height.toFloat(), cam.x, cam.y, cam.scale)
+        val bottomRight = screenFromWorld(maxX, maxY, frame.width.toFloat(), frame.height.toFloat(), cam.x, cam.y, cam.scale)
+        assertEquals(0f, topLeft.x, absoluteTolerance = 1.5f)
+        assertEquals(0f, topLeft.y, absoluteTolerance = 1.5f)
+        assertEquals(frame.width.toFloat(), bottomRight.x, absoluteTolerance = 1.5f)
+        assertEquals(frame.height.toFloat(), bottomRight.y, absoluteTolerance = 1.5f)
+        assertTrue(cam.scale > GraphMetrics.FIT_MAX)
+    }
+
+    @Test
+    fun panImageOffsetFollowsTheCamera() {
+        val still = panImageOffset(originX = 10f, originY = 20f, camX = 10f, camY = 20f, scale = 2f, margin = 40f)
+        assertEquals(-40f, still.x, absoluteTolerance = TOLERANCE)
+        assertEquals(-40f, still.y, absoluteTolerance = TOLERANCE)
+        val moved = panImageOffset(originX = 10f, originY = 20f, camX = 0f, camY = 20f, scale = 2f, margin = 40f)
+        assertEquals(-20f, moved.x, absoluteTolerance = TOLERANCE)
     }
 
     @Test

@@ -10,6 +10,7 @@ import org.jetbrains.jewel.foundation.theme.JewelTheme
 
 object ComposePalette {
     @Composable
+    @ReadOnlyComposable
     fun status(kind: StatusKind): Color = when (kind) {
         StatusKind.Outdated -> if (dark()) Color(0xFFF0A050) else Color(0xFFC24E00)
         StatusKind.Current -> if (dark()) Color(0xFF3DB872) else Color(0xFF1B7F4E)
@@ -20,15 +21,18 @@ object ComposePalette {
     }
 
     @Composable
+    @ReadOnlyComposable
     fun channel(channel: VersionChannel): Color = when (channel) {
         VersionChannel.Stable -> status(StatusKind.Current)
         VersionChannel.ReleaseCandidate -> status(StatusKind.Rc)
         VersionChannel.Beta -> status(StatusKind.Beta)
         VersionChannel.Alpha -> status(StatusKind.Alpha)
         VersionChannel.Snapshot -> status(StatusKind.Snapshot)
+        VersionChannel.Dev -> status(StatusKind.Snapshot)
     }
 
     @Composable
+    @ReadOnlyComposable
     fun score(score: OfferScore): Color = when (score) {
         OfferScore.Safe, OfferScore.Recommended -> status(StatusKind.Current)
         OfferScore.Risky -> status(StatusKind.Outdated)
@@ -48,18 +52,23 @@ object ComposePalette {
     fun accent(): Color = JewelTheme.globalColors.outlines.focused
 
     @Composable
+    @ReadOnlyComposable
     fun tabUpdates(): Color = status(StatusKind.Outdated)
 
     @Composable
+    @ReadOnlyComposable
     fun tabLibraries(): Color = current()
 
     @Composable
+    @ReadOnlyComposable
     fun tabAnalytics(): Color = status(StatusKind.Current)
 
     @Composable
+    @ReadOnlyComposable
     fun tabSources(): Color = status(StatusKind.Alpha)
 
     @Composable
+    @ReadOnlyComposable
     fun cardFill(): Color = if (dark()) Color(0xFF2B2D30) else Color(0xFFF7F8FA)
 
     @Composable
@@ -67,9 +76,11 @@ object ComposePalette {
     fun cardBorder(): Color = JewelTheme.globalColors.borders.normal
 
     @Composable
+    @ReadOnlyComposable
     fun noteFill(): Color = if (dark()) Color(0xFF323437) else Color(0xFFEEF1F5)
 
     @Composable
+    @ReadOnlyComposable
     fun current(): Color = if (dark()) Color(0xFF7AA8F0) else Color(0xFF3D6BC9)
 
     @Composable

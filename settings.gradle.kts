@@ -1,7 +1,4 @@
-import org.jetbrains.intellij.platform.gradle.extensions.intellijPlatform
-
 pluginManagement {
-    // Settings plugins cannot use alias(libs.plugins.*); versions come from gradle/libs.versions.toml.
     val catalogFile = settings.layout.settingsDirectory.file("gradle/libs.versions.toml").asFile
     fun catalogVersion(key: String): String {
         val prefix = "$key = \""
@@ -11,12 +8,10 @@ pluginManagement {
             .substringBefore('"')
     }
     val foojayResolverVersion = catalogVersion("foojay-resolver")
-    val intellijPlatformPluginVersion = catalogVersion("intellij-platform")
     resolutionStrategy {
         eachPlugin {
-            when (requested.id.id) {
-                "org.gradle.toolchains.foojay-resolver-convention" -> useVersion(foojayResolverVersion)
-                "org.jetbrains.intellij.platform.settings" -> useVersion(intellijPlatformPluginVersion)
+            if (requested.id.id == "org.gradle.toolchains.foojay-resolver-convention") {
+                useVersion(foojayResolverVersion)
             }
         }
     }
@@ -28,18 +23,21 @@ pluginManagement {
 
 plugins {
     id("org.gradle.toolchains.foojay-resolver-convention")
-    id("org.jetbrains.intellij.platform.settings")
 }
 
 dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
     repositories {
         mavenCentral()
-        intellijPlatform {
-            defaultRepositories()
-        }
     }
 }
 
 rootProject.name = "LibsHelperPlugin"
 include("core")
+include("core:utils")
+include("feature:feature-log:api")
+include("feature:feature-log:impl")
+include("feature:feature-analytics:api")
+include("feature:feature-analytics:impl")
+include("feature:feature-mcp:api")
+include("feature:feature-mcp:impl")

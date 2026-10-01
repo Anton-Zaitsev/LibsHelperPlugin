@@ -76,7 +76,7 @@ private fun readPomProperties(file: Path): PomCoordinates? {
                 generateSequence { zip.nextEntry }.forEach { entry ->
                     val name = entry.name.replace('\\', '/')
                     if (name.startsWith("META-INF/maven/") && name.endsWith("pom.properties") && !entry.isDirectory) {
-                        val text = zip.readBytes().decodeToString()
+                        val text = zip.readCappedBytes()?.decodeToString() ?: return@forEach
                         val props = parsePomProperties(text)
                         val group = props["groupId"]
                         val artifact = props["artifactId"]

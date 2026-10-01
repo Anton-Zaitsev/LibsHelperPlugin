@@ -164,6 +164,41 @@ class ModuleGraphTest {
     }
 
     @Test
+    fun spreadCardsMatchesFixedLayoutWhenCardsAreUniform() {
+        val graph = buildModuleGraph(listOf(":", ":app", ":feature:home"), emptyMap())
+        val map = layoutModuleMap(graph)
+        val spread = spreadCards(map, FloatArray(map.nodes.size) { GraphMetrics.CARD_W })
+        map.nodes.forEachIndexed { index, node ->
+            assertEquals(node.x, spread.nodes[index].x, absoluteTolerance = 0.01f)
+            assertEquals(node.y, spread.nodes[index].y, absoluteTolerance = 0.01f)
+        }
+    }
+
+    @Test
+    fun spreadCardsKeepsWideLabelsFromOverlapping() {
+        val graph = buildModuleGraph(listOf(":", ":app", ":lib"), emptyMap())
+        val map = layoutModuleMap(graph)
+        val app = map.indexById.getValue(":app")
+        val lib = map.indexById.getValue(":lib")
+        val widths = FloatArray(map.nodes.size) { GraphMetrics.CARD_W }
+        widths[app] = WIDE_CARD
+        val spread = spreadCards(map, widths)
+        val gap = spread.nodes[lib].x - spread.nodes[app].x
+        val need = (widths[app] + widths[lib]) * 0.5f + GraphMetrics.CARD_GAP
+        assertTrue(gap + 0.01f >= need)
+        val wide = spread.nodes[app]
+        assertTrue(spread.minX <= wide.x - widths[app] * 0.5f)
+        assertTrue(spread.maxX >= wide.x + widths[app] * 0.5f)
+    }
+
+    @Test
+    fun cardWidthStaysAtLeastTheStandardCard() {
+        assertEquals(GraphMetrics.CARD_W, cardWidthForLabel(10f, LABEL_CHROME))
+        assertEquals(WIDE_CARD + LABEL_CHROME, cardWidthForLabel(WIDE_CARD, LABEL_CHROME))
+        assertEquals(GraphMetrics.CARD_W, cardWidthForLabel(Float.NaN, LABEL_CHROME))
+    }
+
+    @Test
     fun spatialGridAndLayoutHandleAThousandNodes() {
         val nodes = mutableListOf(ModuleNode(":", "root", ModuleKind.Root, null))
         repeat(GROUP_COUNT) { group ->
@@ -194,5 +229,7 @@ class ModuleGraphTest {
         const val GROUP_COUNT = 30
         const val CHILD_COUNT = 40
         const val QUERY = 64
+        const val WIDE_CARD = 800f
+        const val LABEL_CHROME = 75f
     }
 }

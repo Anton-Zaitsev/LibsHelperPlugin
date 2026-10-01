@@ -3,7 +3,6 @@ package com.zaycev.libshelper.ide.inlay
 import com.intellij.codeInsight.hints.presentation.BasePresentation
 import com.intellij.codeInsight.hints.presentation.InlayPresentation
 import com.intellij.codeInsight.hints.presentation.PresentationFactory
-import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.colors.EditorFontType
 import com.intellij.openapi.editor.markup.TextAttributes
@@ -13,7 +12,9 @@ import com.zaycev.libshelper.core.inlay.BadgeLayout
 import com.zaycev.libshelper.core.inlay.DependencyHint
 import com.zaycev.libshelper.core.inlay.DependencyHintKind
 import com.zaycev.libshelper.core.inlay.layoutBadge
+import com.zaycev.libshelper.core.model.VersionChannel
 import com.zaycev.libshelper.ide.i18n.msg
+import com.zaycev.libshelper.ide.ui.channelLabel
 import java.awt.Color
 import java.awt.Font
 import java.awt.FontMetrics
@@ -33,7 +34,15 @@ internal fun dependencyHintPresentation(
 }
 
 internal fun hintLabel(hint: DependencyHint): String = when (hint.kind) {
-    DependencyHintKind.Outdated -> hint.recommendedVersion?.takeIf { it.isNotBlank() } ?: msg("inlay.label.outdated")
+    DependencyHintKind.Outdated -> {
+        val version = hint.recommendedVersion?.takeIf { it.isNotBlank() }
+        val channel = hint.recommendedChannel
+        when {
+            version == null -> msg("inlay.label.current")
+            channel != null && channel != VersionChannel.Stable -> "$version · ${channelLabel(channel)}"
+            else -> version
+        }
+    }
     DependencyHintKind.Current -> msg("inlay.label.current")
     DependencyHintKind.Alpha -> msg("inlay.label.alpha")
     DependencyHintKind.Beta -> msg("inlay.label.beta")
@@ -52,7 +61,7 @@ internal fun matchesSettings(hint: DependencyHint, settings: DependencyHintSetti
         -> settings.showPrerelease
     }
 
-private fun hintTooltip(hint: DependencyHint): String {
+internal fun hintTooltip(hint: DependencyHint): String {
     val name = hint.catalogAlias ?: hint.coordinatesKey
     return when (hint.kind) {
         DependencyHintKind.Outdated -> {
@@ -109,7 +118,7 @@ private class StatusBadgePresentation(
             val pillX = leading()
             val pillWidth = placed.width - leading()
             val height = placed.height
-            g2.color = pillBackground(editor)
+            g2.color = bubbleFill(accent)
             g2.fillRoundRect(pillX, 0, pillWidth, height, height, height)
             val mid = height / 2.0
             val dot = dotSize()
@@ -123,7 +132,7 @@ private class StatusBadgePresentation(
                 JBUI.scale(DOT_CORNER),
             )
             g2.font = font
-            g2.color = attributes.foregroundColor ?: labelColor(editor)
+            g2.color = accent
             g2.drawString(
                 label,
                 placed.textX,
@@ -155,20 +164,8 @@ private fun labelFont(editor: Editor): Font {
     return base.deriveFont(Font.PLAIN, base.size2D * FONT_SCALE)
 }
 
-private fun labelColor(editor: Editor): Color {
-    val attributes = editor.colorsScheme.getAttributes(DefaultLanguageHighlighterColors.INLAY_TEXT_WITHOUT_BACKGROUND)
-    return attributes?.foregroundColor ?: editor.colorsScheme.defaultForeground
-}
-
-private fun pillBackground(editor: Editor): Color {
-    val attributes = editor.colorsScheme.getAttributes(DefaultLanguageHighlighterColors.INLINE_PARAMETER_HINT)
-    val fromScheme = attributes?.backgroundColor
-    if (fromScheme != null) return fromScheme
-    return JBColor(
-        Color(RGB_MIN, RGB_MIN, RGB_MIN, PILL_ALPHA_LIGHT),
-        Color(RGB_MAX, RGB_MAX, RGB_MAX, PILL_ALPHA_DARK),
-    )
-}
+private fun bubbleFill(accent: Color): Color =
+    Color(accent.red, accent.green, accent.blue, BUBBLE_ALPHA)
 
 private fun leading(): Int = JBUI.scale(LEADING)
 
@@ -180,8 +177,5 @@ private const val PAD_H = 6
 private const val PAD_V = 2
 private const val GAP = 4
 private const val LEADING = 6
-private const val PILL_ALPHA_LIGHT = 36
-private const val PILL_ALPHA_DARK = 40
-private const val RGB_MIN = 0
-private const val RGB_MAX = 255
+private const val BUBBLE_ALPHA = 56
 private const val DOT_CORNER = 2

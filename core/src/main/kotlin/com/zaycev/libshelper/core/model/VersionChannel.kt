@@ -6,5 +6,6 @@ enum class VersionChannel {
     Beta,
     Alpha,
     Snapshot,
+    Dev,
 }
 

@@ -13,7 +13,9 @@ import com.zaycev.libshelper.core.model.RepositoryKind
 import com.zaycev.libshelper.core.network.HttpFailure
 import com.zaycev.libshelper.core.network.HttpGetResult
 import com.zaycev.libshelper.core.network.MetadataGateway
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 
 suspend fun lookupMetadata(
     coordinates: Coordinates,
@@ -27,12 +29,25 @@ suspend fun lookupMetadata(
     onAttempt: (url: String, fromCache: Boolean, outcome: String, durationMs: Long) -> Unit = { _, _, _, _ -> },
 ): MetadataLookup {
     val path = metadataPath(coordinates.group, coordinates.artifact)
-    val officialUrls = officialBasesFor(coordinates, isPlugin).map { it.trimEnd('/') + "/" + path }
+        ?: return MetadataLookup(
+            resolved = null,
+            officialError = "bad_coordinates",
+            proxyError = null,
+            repositoryStatuses = emptyList(),
+        )
+    val officialUrls = officialBasesFor(coordinates, isPlugin, projectRepositories)
+        .map { it.trimEnd('/') + "/" + path }
     val statuses = mutableListOf<DeclaredRepository>()
     var officialError: String? = null
 
     for (url in officialUrls) {
         val cached = cachedHit(cache, coordinates, url, forceRefresh, nowEpochMs)
+        if (cached?.negative == true) {
+            onAttempt(url, true, "cache_miss", 0)
+            officialError = "not_found"
+            statuses += repositoryStatusOf(url, ConnectStatus.Unreachable, "not_found", official = true)
+            continue
+        }
         if (cached != null) {
             onAttempt(url, true, "cache", 0)
             return MetadataLookup(
@@ -61,6 +76,12 @@ suspend fun lookupMetadata(
             }
             is HttpGetResult.Failure -> {
                 officialError = result.error.userMessage
+                if (result.error is HttpFailure.NotFound || result.error is HttpFailure.Unauthorized) {
+                    cache?.put(
+                        CacheKey(coordinates.key, url),
+                        negativeCached(url, nowEpochMs),
+                    )
+                }
                 statuses += repositoryStatusOf(
                     url,
                     connectStatusOf(result.error),
@@ -155,6 +176,15 @@ private fun CachedMetadata.toResolved(): ResolvedMetadata = ResolvedMetadata(
     fromCache = true,
 )
 
+private fun negativeCached(url: String, nowEpochMs: Long): CachedMetadata = CachedMetadata(
+    versions = emptyList(),
+    originKind = MetadataOriginKind.OfficialDirect,
+    originUrl = url,
+    storedAtEpochMs = nowEpochMs,
+    usedProxyFallback = false,
+    negative = true,
+)
+
 private fun ResolvedMetadata.toCached(nowEpochMs: Long): CachedMetadata = CachedMetadata(
     versions = metadata.versions,
     latestTag = metadata.latestTag,
@@ -165,13 +195,41 @@ private fun ResolvedMetadata.toCached(nowEpochMs: Long): CachedMetadata = Cached
     usedProxyFallback = usedProxyFallback,
 )
 
+private val inFlightGets = ConcurrentHashMap<String, CompletableDeferred<HttpGetResult>>()
+
 private suspend fun getSafely(
     gateway: MetadataGateway,
     url: String,
     httpProxy: HttpProxySettings?,
 ): HttpGetResult {
+    val key = "$url\u0000${httpProxy?.host.orEmpty()}:${httpProxy?.port ?: 0}"
+    while (true) {
+        val existing = inFlightGets[key]
+        if (existing != null) {
+            return existing.await()
+        }
+        val deferred = CompletableDeferred<HttpGetResult>()
+        if (inFlightGets.putIfAbsent(key, deferred) != null) continue
+        try {
+            val result = getOnce(gateway, url, httpProxy)
+            deferred.complete(result)
+            return result
+        } catch (cancelled: CancellationException) {
+            deferred.cancel(cancelled)
+            throw cancelled
+        } finally {
+            inFlightGets.remove(key, deferred)
+        }
+    }
+}
+
+private suspend fun getOnce(
+    gateway: MetadataGateway,
+    url: String,
+    httpProxy: HttpProxySettings?,
+): HttpGetResult {
     return try {
-        gateway.get(url, httpProxy)
+        gateway.get(url, httpProxy, allowAuthPrompt = false)
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (error: Exception) {

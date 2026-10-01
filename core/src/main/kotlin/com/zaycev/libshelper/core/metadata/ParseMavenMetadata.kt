@@ -9,11 +9,12 @@ fun parseMavenMetadata(xml: String): MavenMetadata {
         isNamespaceAware = false
         isExpandEntityReferences = false
         isXIncludeAware = false
-        runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
-        runCatching { setFeature("http://xml.org/sax/features/external-general-entities", false) }
-        runCatching { setFeature("http://xml.org/sax/features/external-parameter-entities", false) }
-        runCatching { setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "") }
-        runCatching { setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "") }
+        setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
+        setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+        setFeature("http://xml.org/sax/features/external-general-entities", false)
+        setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+        setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
+        setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
     }
     val document = factory.newDocumentBuilder().parse(xml.byteInputStream())
     val root = document.documentElement

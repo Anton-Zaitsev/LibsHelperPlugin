@@ -1,41 +1,44 @@
-@file:Suppress("UnstableApiUsage")
-
 package com.zaycev.libshelper.ide.inlay
 
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
-import com.intellij.codeInsight.daemon.impl.InlayHintsPassFactoryInternal
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.fileEditor.FileDocumentManager
-import com.intellij.openapi.fileEditor.FileEditorManager
-import com.intellij.openapi.fileEditor.TextEditor
+import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiManager
+import com.intellij.openapi.util.Key
 
 internal fun requestDependencyHintsUpdate(project: Project) {
     val app = ApplicationManager.getApplication()
     val task = Runnable {
         if (project.isDisposed) return@Runnable
-        val analyzer = DaemonCodeAnalyzer.getInstance(project)
-        val psiManager = PsiManager.getInstance(project)
-        var restartedAny = false
-        FileEditorManager.getInstance(project).allEditors.forEach { fileEditor ->
-            val editor = (fileEditor as? TextEditor)?.editor ?: return@forEach
-            val file = FileDocumentManager.getInstance().getFile(editor.document) ?: return@forEach
-            if (!isDependencyHintFile(file)) return@forEach
-            runCatching { InlayHintsPassFactoryInternal.clearModificationStamp(editor) }
-            val psi = psiManager.findFile(file)
-            if (psi != null) {
-                analyzer.restart(psi)
-                restartedAny = true
-            }
-        }
-        if (!restartedAny) {
-            analyzer.restart()
-        }
+        clearInlayStamps(project)
+        DaemonCodeAnalyzer.getInstance(project).restart("libshelper")
     }
     if (app.isDispatchThread) {
         task.run()
     } else {
-        app.invokeLater(task, project.disposed)
+        app.invokeLater(task, ModalityState.nonModal())
     }
+}
+
+private fun clearInlayStamps(project: Project) {
+    val keys = inlayStampKeys
+    if (keys.isEmpty()) return
+    for (editor in EditorFactory.getInstance().allEditors) {
+        if (editor.project != project) continue
+        for (key in keys) editor.putUserData(key, null)
+    }
+}
+
+private val inlayStampKeys: List<Key<Any>> = listOf(
+    "com.intellij.codeInsight.daemon.impl.InlayHintsPassFactoryInternalKt" to "access\$getPSI_MODIFICATION_STAMP\$p",
+    "com.intellij.codeInsight.hints.declarative.impl.DeclarativeInlayHintsPassFactory" to "access\$getPSI_MODIFICATION_STAMP\$cp",
+).mapNotNull { (typeName, methodName) -> inlayStampKey(typeName, methodName) }
+
+private fun inlayStampKey(typeName: String, methodName: String): Key<Any>? = try {
+    val accessor = Class.forName(typeName).getMethod(methodName)
+    @Suppress("UNCHECKED_CAST")
+    accessor.invoke(null) as Key<Any>
+} catch (_: ReflectiveOperationException) {
+    null
 }

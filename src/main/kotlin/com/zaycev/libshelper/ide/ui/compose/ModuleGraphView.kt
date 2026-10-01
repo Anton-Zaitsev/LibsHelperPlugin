@@ -22,12 +22,13 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,11 +53,11 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import com.intellij.openapi.project.Project
 import com.zaycev.libshelper.core.graph.CameraFrame
 import com.zaycev.libshelper.core.graph.GraphMetrics
 import com.zaycev.libshelper.core.graph.ModuleMap
 import com.zaycev.libshelper.core.graph.PlacedNode
-import com.zaycev.libshelper.core.graph.SpatialGrid
 import com.zaycev.libshelper.core.graph.cameraFlyDurationMs
 import com.zaycev.libshelper.core.graph.cameraNear
 import com.zaycev.libshelper.core.graph.fitCamera
@@ -64,9 +65,7 @@ import com.zaycev.libshelper.core.graph.focusCamera
 import com.zaycev.libshelper.core.graph.hitCardIndex
 import com.zaycev.libshelper.core.graph.lerpCamera
 import com.zaycev.libshelper.core.graph.panCamera
-import com.zaycev.libshelper.core.graph.relatedNodeIds
 import com.zaycev.libshelper.core.graph.searchModuleIndices
-import com.zaycev.libshelper.core.graph.spatialGridOf
 import com.zaycev.libshelper.core.graph.worldFromScreen
 import com.zaycev.libshelper.core.graph.zoomCamera
 import com.zaycev.libshelper.core.graph.zoomFactorFromScroll
@@ -77,98 +76,172 @@ import kotlinx.collections.immutable.ImmutableSet
 import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.collections.immutable.toPersistentList
 import kotlinx.collections.immutable.toPersistentSet
-import kotlin.math.hypot
+import kotlinx.coroutines.launch
 import org.jetbrains.jewel.foundation.theme.JewelTheme
 import org.jetbrains.jewel.ui.component.OutlinedButton
 import org.jetbrains.jewel.ui.component.Text
 import org.jetbrains.jewel.ui.component.TextField
+import kotlin.math.hypot
 
 @Stable
 private class GraphUiCam {
-    var scale by mutableFloatStateOf(1f)
-    var x by mutableFloatStateOf(0f)
-    var y by mutableFloatStateOf(0f)
-    var viewW by mutableFloatStateOf(0f)
-    var viewH by mutableFloatStateOf(0f)
+    var worldX = 0f
+    var worldY = 0f
+    var worldScale = 1f
+    var camera by mutableStateOf(CameraFrame(0f, 0f, 1f))
+    var viewW = 0f
+    var viewH = 0f
+    var hoverPlain = -1
     var hoverIndex by mutableIntStateOf(-1)
+    var hoverTick by mutableIntStateOf(0)
+    var hoverX = Float.NaN
+    var hoverY = Float.NaN
     var selectedId by mutableStateOf<String?>(null)
-    var fitted by mutableStateOf(false)
-    var revealAll by mutableStateOf(false)
+    var fitted = false
     var pressX = 0f
     var pressY = 0f
     var dragging = false
+    var flying = false
     var lastClickMs = 0L
     var lastClickX = 0f
     var lastClickY = 0f
     var flyTarget by mutableStateOf<CameraFrame?>(null)
+    val hitBuffer = IntArray(HIT_CAP)
+    val hitSize = IntArray(1)
 
     fun stopFly() {
+        val wasFlying = flying
+        flying = false
         flyTarget = null
+        if (wasFlying && hoverX.isFinite()) hoverTick++
     }
 
     fun requestFly(target: CameraFrame) {
-        val from = CameraFrame(x, y, scale)
+        val from = CameraFrame(worldX, worldY, worldScale)
         if (cameraNear(from, target)) {
-            flyTarget = null
+            stopFly()
             applyFrame(target)
             return
         }
+        hoverPlain = -1
+        if (hoverIndex != -1) hoverIndex = -1
+        flying = true
         flyTarget = target
+    }
+
+    fun beginDrag() {
+        dragging = true
+        setHover(-1)
+        stopFly()
+    }
+
+    fun endDrag() {
+        dragging = false
+    }
+
+    fun applyFrame(frame: CameraFrame) {
+        worldX = frame.x
+        worldY = frame.y
+        worldScale = frame.scale
+        camera = frame
+        if (!flying && !dragging && hoverX.isFinite()) hoverTick++
+    }
+
+    fun setHover(index: Int) {
+        hoverPlain = index
+        if (index < 0) {
+            hoverX = Float.NaN
+            hoverY = Float.NaN
+        }
+        if (index != hoverIndex) hoverIndex = index
+    }
+
+    fun pointHover(x: Float, y: Float) {
+        hoverX = x
+        hoverY = y
+        hoverTick++
     }
 }
 
 @Composable
 fun ModuleGraphView(
+    project: Project,
     map: ModuleMap,
     fullscreen: Boolean,
     onToggleFullscreen: () -> Unit,
     onOpenModule: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val scope = rememberCoroutineScope()
+    val dark = JewelTheme.isDark
+    val palette = rememberGraphPalette()
+    val measurer = rememberTextMeasurer(cacheSize = 64)
+    val labelStyle = JewelTheme.defaultTextStyle.copy(fontSize = 12.sp, color = palette.label)
+    val glyphStyle = JewelTheme.defaultTextStyle.copy(fontSize = 11.sp, color = Color.White)
+    val scene = remember(map, palette, dark) {
+        buildGraphScene(map, measurer, palette, dark, labelStyle, glyphStyle)
+    }
+    val focusCache = remember(scene) { GraphFocusCache() }
+    val lodPicker = remember { GraphLodPicker() }
+    val frameStats = remember { GraphFrameStats() }
+    val ui = remember { GraphUiCam() }
     val searchState = rememberTextFieldState()
-    val grid = remember(map) { spatialGridOf(map) }
-    val scratch = remember { GraphScratch() }
-    val camDraw = remember { GraphCam() }
-    val ui = remember(map) { GraphUiCam() }
     var matchCursor by remember { mutableIntStateOf(0) }
     val query = searchState.text.toString()
-    val found = remember(query, map) { searchModuleIndices(map, query) }
-    val glow = remember(ui.selectedId, map) { relatedNodeIds(map, ui.selectedId) }
-    val kinds = remember(map) { map.nodes.map { it.kind }.distinct().sortedBy { it.ordinal }.toPersistentList() }
-    val matchIds = remember(found, map) {
-        if (found.isEmpty()) persistentSetOf() else found.map { map.nodes[it].id }.toPersistentSet()
+    val found = remember(query, scene) { searchModuleIndices(scene.map, query) }
+    val kinds = remember(scene) { scene.map.nodes.map { it.kind }.distinct().sortedBy { it.ordinal }.toPersistentList() }
+    val matchIds = remember(found, scene) {
+        if (found.isEmpty()) persistentSetOf() else found.map { scene.map.nodes[it].id }.toPersistentSet()
     }
 
     fun focusNode(node: PlacedNode) {
         ui.selectedId = node.id
-        ui.requestFly(focusCamera(node.x, node.y, ui.scale))
+        ui.requestFly(focusCamera(node.x, node.y, ui.worldScale))
     }
 
-    fun showAllModules() {
-        ui.revealAll = true
+    DisposableEffect(scene) {
+        onDispose {
+            focusCache.close()
+            scene.close()
+        }
+    }
+
+    LaunchedEffect(scene) {
         ui.fitted = false
-        ui.applyFit(map)
+        ui.stopFly()
+        ui.setHover(-1)
+        if (ui.viewW > 1f && ui.viewH > 1f) ui.applyFit(scene.map)
     }
 
     LaunchedEffect(ui.flyTarget) {
         val target = ui.flyTarget ?: return@LaunchedEffect
-        val from = CameraFrame(ui.x, ui.y, ui.scale)
+        val from = CameraFrame(ui.worldX, ui.worldY, ui.worldScale)
         val durationNs = cameraFlyDurationMs(from, target) * NANOS_PER_MS
         val startNs = withFrameNanos { it }
-        while (true) {
+        while (ui.flyTarget === target) {
             val elapsed = withFrameNanos { it } - startNs
             val t = (elapsed.toFloat() / durationNs).coerceIn(0f, 1f)
             ui.applyFrame(lerpCamera(from, target, FastOutSlowInEasing.transform(t)))
             if (t >= 1f) break
         }
-        if (ui.flyTarget == target) ui.flyTarget = null
+        if (ui.flyTarget === target) ui.stopFly()
     }
 
-    DisposableEffect(query, map) {
-        matchCursor = 0
-        if (query.isNotBlank()) {
-            found.firstOrNull()?.let { focusNode(map.nodes[it]) }
+    LaunchedEffect(scene) {
+        snapshotFlow { ui.hoverTick }.collect {
+            withFrameNanos { }
+            if (ui.flying || ui.dragging) return@collect
+            val screenX = ui.hoverX
+            val screenY = ui.hoverY
+            if (!screenX.isFinite() || !screenY.isFinite() || ui.viewW < 1f) return@collect
+            val hit = hitCard(scene, ui, screenX, screenY)
+            if (hit != ui.hoverPlain) ui.setHover(hit)
         }
+    }
+
+    DisposableEffect(query, scene) {
+        matchCursor = 0
+        if (query.isNotBlank()) found.firstOrNull()?.let { focusNode(scene.map.nodes[it]) }
         onDispose { }
     }
 
@@ -182,27 +255,30 @@ fun ModuleGraphView(
             onCycle = {
                 if (found.isEmpty()) return@GraphToolbar
                 matchCursor = (matchCursor + 1) % found.size
-                focusNode(map.nodes[found[matchCursor]])
+                focusNode(scene.map.nodes[found[matchCursor]])
             },
-            onShowAll = { showAllModules() },
+            onShowAll = {
+                ui.fitted = false
+                ui.applyFit(scene.map)
+            },
             onToggleFullscreen = onToggleFullscreen,
+            onExport = { scope.launch { exportModuleGraphPng(project, scene) } },
         )
-        GraphStatus(query, found, matchCursor, map.nodes.size)
+        GraphStatus(query, found, matchCursor, scene.map.nodes.size)
         GraphViewport(
-            map = map,
-            grid = grid,
-            scratch = scratch,
-            camDraw = camDraw,
+            scene = scene,
             ui = ui,
-            glow = glow,
+            lodPicker = lodPicker,
+            frameStats = frameStats,
+            focusCache = focusCache,
             matchIds = matchIds,
             fullscreen = fullscreen,
             onOpenModule = onOpenModule,
             onSelectNode = { node -> focusNode(node) },
             modifier = if (fullscreen) Modifier.weight(1f).fillMaxWidth() else Modifier,
         )
-        GraphLegend(kinds = kinds, dark = JewelTheme.isDark)
-        GraphCaption(map, ui.hoverIndex, ui.selectedId)
+        GraphLegend(kinds = kinds, dark = dark)
+        GraphCaption(scene.map, ui)
     }
 }
 
@@ -213,6 +289,7 @@ private fun GraphToolbar(
     onCycle: () -> Unit,
     onShowAll: () -> Unit,
     onToggleFullscreen: () -> Unit,
+    onExport: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -237,6 +314,9 @@ private fun GraphToolbar(
         OutlinedButton(onClick = onToggleFullscreen) {
             Text(msg(if (fullscreen) "analytics.graph.exitFullscreen" else "analytics.graph.fullscreen"))
         }
+        OutlinedButton(onClick = onExport) {
+            Text(msg("analytics.graph.export"))
+        }
     }
 }
 
@@ -259,13 +339,12 @@ private fun GraphStatus(
 @Composable
 private fun GraphCaption(
     map: ModuleMap,
-    hoverIndex: Int,
-    selectedId: String?,
+    ui: GraphUiCam,
     modifier: Modifier = Modifier,
 ) {
     val captionIndex = when {
-        hoverIndex >= 0 -> hoverIndex
-        selectedId != null -> map.indexById[selectedId] ?: -1
+        ui.hoverIndex >= 0 -> ui.hoverIndex
+        ui.selectedId != null -> map.indexById[ui.selectedId] ?: -1
         else -> -1
     }
     if (captionIndex >= 0) {
@@ -278,31 +357,23 @@ private fun GraphCaption(
 
 @Composable
 private fun GraphViewport(
-    map: ModuleMap,
-    grid: SpatialGrid,
-    scratch: GraphScratch,
-    camDraw: GraphCam,
+    scene: GraphScene,
     ui: GraphUiCam,
-    glow: ImmutableSet<String>,
+    lodPicker: GraphLodPicker,
+    frameStats: GraphFrameStats,
+    focusCache: GraphFocusCache,
     matchIds: ImmutableSet<String>,
     fullscreen: Boolean,
     onOpenModule: (String) -> Unit,
     onSelectNode: (PlacedNode) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val palette = rememberGraphPalette()
-    val dark = JewelTheme.isDark
-    val measurer = rememberTextMeasurer(cacheSize = 64)
-    val labelStyle = JewelTheme.defaultTextStyle.copy(fontSize = 12.sp, color = palette.label)
-    val glyphStyle = JewelTheme.defaultTextStyle.copy(fontSize = 11.sp, color = Color.White)
     val consumeScroll = remember {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset = available
         }
     }
     val shape = RoundedCornerShape(10.dp)
-    val highlight = GraphHighlight(ui.hoverIndex, ui.selectedId, glow, matchIds, ui.revealAll)
-    val text = GraphText(measurer, labelStyle, glyphStyle)
     val openModule by rememberUpdatedState(onOpenModule)
     val selectNode by rememberUpdatedState(onSelectNode)
     val heightModifier = if (fullscreen) {
@@ -314,7 +385,7 @@ private fun GraphViewport(
         modifier
             .then(heightModifier)
             .clip(shape)
-            .background(palette.canvas)
+            .background(scene.palette.canvas)
             .border(1.dp, ComposePalette.cardBorder(), shape)
             .clipToBounds()
             .nestedScroll(consumeScroll),
@@ -325,18 +396,16 @@ private fun GraphViewport(
                 .onSizeChanged { size ->
                     ui.viewW = size.width.toFloat()
                     ui.viewH = size.height.toFloat()
-                    if (!ui.fitted && map.nodes.isNotEmpty() && ui.viewW > 1f && ui.viewH > 1f) {
-                        ui.applyFit(map)
+                    if (!ui.fitted && scene.map.nodes.isNotEmpty() && ui.viewW > 1f && ui.viewH > 1f) {
+                        ui.applyFit(scene.map)
                     }
                 }
-                .pointerInput(map) {
+                .pointerInput(scene) {
                     awaitPointerEventScope {
                         while (true) {
                             applyGraphPointer(
                                 event = awaitPointerEvent(PointerEventPass.Initial),
-                                map = map,
-                                grid = grid,
-                                scratch = scratch,
+                                scene = scene,
                                 ui = ui,
                                 onOpenModule = openModule,
                                 onSelectNode = selectNode,
@@ -345,10 +414,21 @@ private fun GraphViewport(
                     }
                 },
         ) {
-            camDraw.scale = ui.scale
-            camDraw.x = ui.x
-            camDraw.y = ui.y
-            drawModuleGraph(map, grid, scratch, text, palette, dark, camDraw, highlight)
+            val camera = ui.camera
+            val started = System.nanoTime()
+            val lod = lodPicker.pick(camera.scale)
+            val focus = focusCache.use(scene, ui.selectedId)
+            drawGraphFrame(
+                scene = scene,
+                camera = camera,
+                lod = lod,
+                hoverIndex = ui.hoverIndex,
+                selectedId = ui.selectedId,
+                matchIds = matchIds,
+                focus = focus,
+                palette = scene.palette,
+            )
+            frameStats.record((System.nanoTime() - started) / NANOS_PER_MS, ui.dragging || ui.flying)
         }
         GraphZoomControls(
             onZoomIn = { ui.zoomAroundCenter(GraphMetrics.BUTTON_ZOOM) },
@@ -444,12 +524,6 @@ private fun kindTitle(kind: ModuleKind): String = when (kind) {
     ModuleKind.Common -> msg("analytics.graph.kind.common")
 }
 
-private fun GraphUiCam.applyFrame(frame: CameraFrame) {
-    x = frame.x
-    y = frame.y
-    scale = frame.scale
-}
-
 private fun GraphUiCam.applyFit(map: ModuleMap) {
     if (map.nodes.isEmpty() || viewW < 1f || viewH < 1f) return
     stopFly()
@@ -460,7 +534,7 @@ private fun GraphUiCam.applyFit(map: ModuleMap) {
 private fun GraphUiCam.zoomAt(pivot: Offset, factor: Float) {
     if (viewW < 1f || viewH < 1f) return
     stopFly()
-    applyFrame(zoomCamera(pivot.x, pivot.y, viewW, viewH, x, y, scale, factor))
+    applyFrame(zoomCamera(pivot.x, pivot.y, viewW, viewH, worldX, worldY, worldScale, factor))
 }
 
 private fun GraphUiCam.zoomAroundCenter(factor: Float) {
@@ -469,9 +543,7 @@ private fun GraphUiCam.zoomAroundCenter(factor: Float) {
 
 private fun applyGraphPointer(
     event: PointerEvent,
-    map: ModuleMap,
-    grid: SpatialGrid,
-    scratch: GraphScratch,
+    scene: GraphScene,
     ui: GraphUiCam,
     onOpenModule: (String) -> Unit,
     onSelectNode: (PlacedNode) -> Unit,
@@ -492,9 +564,9 @@ private fun applyGraphPointer(
                     change.position.y,
                     ui.viewW,
                     ui.viewH,
-                    ui.x,
-                    ui.y,
-                    ui.scale,
+                    ui.worldX,
+                    ui.worldY,
+                    ui.worldScale,
                     factor,
                 ),
             )
@@ -504,59 +576,51 @@ private fun applyGraphPointer(
             if (change.pressed) {
                 if (!ui.dragging) {
                     val slop = hypot(change.position.x - ui.pressX, change.position.y - ui.pressY)
-                    if (slop > CLICK_SLOP) ui.dragging = true
+                    if (slop > CLICK_SLOP) ui.beginDrag()
                 }
                 if (ui.dragging) {
-                    ui.stopFly()
                     val dx = change.position.x - change.previousPosition.x
                     val dy = change.position.y - change.previousPosition.y
-                    ui.applyFrame(panCamera(dx, dy, ui.x, ui.y, ui.scale))
+                    ui.applyFrame(panCamera(dx, dy, ui.worldX, ui.worldY, ui.worldScale))
                     change.consume()
                 }
-            } else {
-                ui.hoverIndex = hitAt(change.position, map, grid, scratch, ui)
+            } else if (!ui.flying) {
+                ui.pointHover(change.position.x, change.position.y)
             }
         }
         PointerEventType.Release -> {
-            if (ui.dragging) return
+            if (ui.dragging) {
+                ui.endDrag()
+                return
+            }
             val now = change.uptimeMillis
             val doubleClick = now - ui.lastClickMs <= DOUBLE_CLICK_MS &&
                 hypot(change.position.x - ui.lastClickX, change.position.y - ui.lastClickY) <= CLICK_SLOP
             ui.lastClickMs = now
             ui.lastClickX = change.position.x
             ui.lastClickY = change.position.y
-            val hit = hitAt(change.position, map, grid, scratch, ui)
+            val hit = hitCard(scene, ui, change.position.x, change.position.y)
             if (doubleClick) {
-                if (hit >= 0) onOpenModule(map.nodes[hit].id) else ui.zoomAt(change.position, GraphMetrics.DOUBLE_CLICK_ZOOM)
+                if (hit >= 0) onOpenModule(scene.map.nodes[hit].id) else ui.zoomAt(change.position, GraphMetrics.DOUBLE_CLICK_ZOOM)
                 change.consume()
                 return
             }
-            if (hit >= 0) onSelectNode(map.nodes[hit])
+            if (hit >= 0) onSelectNode(scene.map.nodes[hit])
         }
+        PointerEventType.Exit -> ui.setHover(-1)
         else -> Unit
     }
 }
 
-private fun hitAt(
-    screen: Offset,
-    map: ModuleMap,
-    grid: SpatialGrid,
-    scratch: GraphScratch,
-    ui: GraphUiCam,
-): Int {
-    val (worldX, worldY) = worldFromScreen(
-        screen.x,
-        screen.y,
-        ui.viewW,
-        ui.viewH,
-        ui.x,
-        ui.y,
-        ui.scale,
-    )
-    return hitCardIndex(map, grid, worldX, worldY, scratch.queryBuf, scratch.querySize)
+private fun hitCard(scene: GraphScene, ui: GraphUiCam, screenX: Float, screenY: Float): Int {
+    if (ui.viewW < 1f || ui.viewH < 1f) return -1
+    val world = worldFromScreen(screenX, screenY, ui.viewW, ui.viewH, ui.worldX, ui.worldY, ui.worldScale)
+    return hitCardIndex(scene.map, scene.grid, world.x, world.y, ui.hitBuffer, ui.hitSize, scene.widths)
 }
 
+private const val GRAPH_HEIGHT_DP = 480
 private const val CLICK_SLOP = 12f
 private const val DOUBLE_CLICK_MS = 400L
 private const val HALF_VIEW = 0.5f
 private const val NANOS_PER_MS = 1_000_000f
+private const val HIT_CAP = 2048

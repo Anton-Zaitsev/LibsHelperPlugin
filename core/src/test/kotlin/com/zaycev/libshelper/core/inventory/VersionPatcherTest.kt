@@ -38,6 +38,38 @@ class VersionPatcherTest {
     }
 
     @Test
+    fun literalDoesNotPrefixCorrupt() {
+        val text = """implementation("g:a:1.0.1")"""
+        assertNull(patchGradleLiteral(text, "g", "a", "1.0", "2.0"))
+    }
+
+    @Test
+    fun literalLeavesCommentsUntouched() {
+        val text = """
+            // implementation("g:a:1.0")
+            implementation("g:a:1.0")
+        """.trimIndent()
+        val patched = checkNotNull(patchGradleLiteral(text, "g", "a", "1.0", "2.0"))
+        assertEquals(true, patched.contains("// implementation(\"g:a:1.0\")"))
+        assertEquals(true, patched.contains("implementation(\"g:a:2.0\")"))
+    }
+
+    @Test
+    fun inlinePreservesCrlfAndSingleQuotes() {
+        val text = "[libraries]\r\nlib = { module = \"g:a\", version = '1.0' }\r\n"
+        val patched = checkNotNull(patchCatalogInlineVersion(text, "lib", "2.0"))
+        assertEquals("[libraries]\r\nlib = { module = \"g:a\", version = '2.0' }\r\n", patched)
+    }
+
+    @Test
+    fun patchesStrictlyInVersionsTable() {
+        val text = "[versions]\nokhttp = { strictly = \"4.12.0\" }\n"
+        val patched = checkNotNull(patchCatalogVersionRef(text, "okhttp", "4.13.0"))
+        assertEquals(true, patched.contains("4.13.0"))
+        assertEquals(false, patched.contains("4.12.0"))
+    }
+
+    @Test
     fun patchesGradleLiteral() {
         val text = """
             dependencies {
@@ -67,5 +99,40 @@ class VersionPatcherTest {
             ),
         )
         assertIs<VersionPatchTarget.CatalogVersionRef>(target)
+    }
+
+    @Test
+    fun readsCatalogVersionThatUndoRestored() {
+        val text = "[versions]\nagp = \"9.0.0-rc02\"\n"
+        assertEquals("9.0.0-rc02", readCatalogVersionRef(text, "agp"))
+        assertEquals("9.5.2", readCatalogVersionRef("[versions]\nagp = { strictly = \"9.5.2\" }\n", "agp"))
+    }
+
+    @Test
+    fun readsInlineVersionAndSkipsVersionRef() {
+        val text = """
+            [libraries]
+            okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+            guava = { module = "com.google.guava:guava", version = "32.1.0-jre" }
+        """.trimIndent()
+        assertNull(readCatalogInlineVersion(text, "okhttp"))
+        assertEquals("32.1.0-jre", readCatalogInlineVersion(text, "guava"))
+    }
+
+    @Test
+    fun readsGradleLiteralIgnoringComments() {
+        val text = """
+            // implementation("g:a:9.9.9")
+            implementation("g:a:1.2.0-beta1")
+        """.trimIndent()
+        val dependency = DeclaredDependency(
+            coordinates = Coordinates("g", "a"),
+            requestedVersion = "1.0.0",
+            configuration = "implementation",
+            module = ":app",
+            source = DependencySource.KotlinDsl,
+            usagePath = "app/build.gradle.kts",
+        )
+        assertEquals("1.2.0-beta1", readDeclaredVersion(text, dependency))
     }
 }

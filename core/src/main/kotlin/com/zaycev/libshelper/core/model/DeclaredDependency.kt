@@ -19,6 +19,7 @@ data class DeclaredDependency(
     val usagePath: String? = null,
     val usageLine: Int? = null,
     val usageLocations: List<SourceLocation> = emptyList(),
+    val referenced: Boolean = true,
 )
 
 data class SourceLocation(

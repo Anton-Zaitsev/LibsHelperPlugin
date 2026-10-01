@@ -2,24 +2,30 @@ package com.zaycev.libshelper.ide.ui.compose
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.intellij.openapi.project.Project
+import com.zaycev.libshelper.core.analytics.DefaultAnalyticsComputer
+import com.zaycev.libshelper.core.analytics.DefaultSunburstLayout
 import com.zaycev.libshelper.core.analytics.LibraryStat
 import com.zaycev.libshelper.core.analytics.ProjectAnalytics
-import com.zaycev.libshelper.core.analytics.projectAnalytics
-import com.zaycev.libshelper.core.analytics.sunburstOf
+import com.zaycev.libshelper.core.analytics.analyticsInput
 import com.zaycev.libshelper.core.model.ProjectReport
 import com.zaycev.libshelper.ide.i18n.msg
 import com.zaycev.libshelper.ide.ui.StatusKind
@@ -33,6 +39,7 @@ import org.jetbrains.jewel.ui.component.Text
 
 @Composable
 fun AnalyticsScreen(
+    project: Project,
     report: ProjectReport,
     wide: Boolean,
     onOpenLibrary: (String) -> Unit,
@@ -41,59 +48,62 @@ fun AnalyticsScreen(
     modifier: Modifier = Modifier,
 ) {
     val analytics = remember(report) {
-        if (report.analytics === ProjectAnalytics.Empty) projectAnalytics(report) else report.analytics
+        if (report.analytics === ProjectAnalytics.Empty) {
+            DefaultAnalyticsComputer().compute(report.analyticsInput())
+        } else {
+            report.analytics
+        }
     }
-    val scroll = rememberScrollState()
     var expanded by remember(report.fingerprint) { mutableStateOf(false) }
     val chartLibraries = if (expanded) analytics.libraries else analytics.thirdParty
     val sunburst = remember(chartLibraries, expanded) {
-        sunburstOf(chartLibraries, msg("analytics.sunburst.other"))
+        DefaultSunburstLayout().layout(chartLibraries, msg("analytics.sunburst.other"))
     }
     val ranked = remember(chartLibraries) { chartLibraries.take(WEIGHT_LIMIT).toPersistentList() }
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(scroll)
-            .padding(12.dp),
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(if (wide) 16.dp else 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (analytics.libraries.isEmpty()) {
-            MutedText(msg("analytics.empty"))
+            item(key = "empty") { MutedText(msg("analytics.empty")) }
         } else {
-            MutedText(msg("analytics.thirdParty", analytics.skippedFirstParty))
-            MetricRow(analytics, wide)
-            AccentCard(ComposePalette.tabAnalytics()) {
-                TitleText(msg("analytics.weight.title"))
-                MutedText(msg("analytics.weight.hint"))
-                if (wide) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        SunburstChart(
-                            data = sunburst,
-                            onOpenLibrary = onOpenLibrary,
-                            modifier = Modifier.weight(1f),
-                        )
-                        WeightList(
-                            items = ranked,
-                            onOpenLibrary = onOpenLibrary,
-                            modifier = Modifier.weight(1f),
-                        )
+            item(key = "third-party") { MutedText(msg("analytics.thirdParty", analytics.skippedFirstParty)) }
+            item(key = "metrics") { MetricRow(analytics, wide) }
+            item(key = "weight") {
+                AccentCard(ComposePalette.tabAnalytics()) {
+                    TitleText(msg("analytics.weight.title"))
+                    MutedText(msg("analytics.weight.hint"))
+                    if (wide) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            SunburstChart(
+                                data = sunburst,
+                                onOpenLibrary = onOpenLibrary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            WeightList(
+                                items = ranked,
+                                onOpenLibrary = onOpenLibrary,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    } else {
+                        SunburstChart(data = sunburst, onOpenLibrary = onOpenLibrary)
+                        WeightList(items = ranked, onOpenLibrary = onOpenLibrary)
                     }
-                } else {
-                    SunburstChart(data = sunburst, onOpenLibrary = onOpenLibrary)
-                    WeightList(items = ranked, onOpenLibrary = onOpenLibrary)
-                }
-                OutlinedButton(onClick = { expanded = !expanded }) {
-                    Text(if (expanded) msg("analytics.collapse") else msg("analytics.expand"))
+                    OutlinedButton(onClick = { expanded = !expanded }) {
+                        Text(if (expanded) msg("analytics.collapse") else msg("analytics.expand"))
+                    }
                 }
             }
             if (expanded) {
-                TitleText(msg("analytics.modules.title"))
-                ResponsiveGrid(items = analytics.libraries, wide = wide) { item ->
+                item(key = "modules-title") { TitleText(msg("analytics.modules.title")) }
+                items(items = analytics.libraries, key = { item -> "lib:${item.key}" }) { item ->
                     LibraryInsightCard(item, onOpenLibrary)
                 }
                 if (analytics.sharedGroups.isNotEmpty()) {
-                    TitleText(msg("analytics.shared.title"))
-                    analytics.sharedGroups.forEach { group ->
+                    item(key = "shared-title") { TitleText(msg("analytics.shared.title")) }
+                    items(items = analytics.sharedGroups, key = { group -> "shared:${group.ref}" }) { group ->
                         AccentCard(ComposePalette.status(StatusKind.Rc)) {
                             TitleText(group.ref)
                             MutedText(group.keys.joinToString())
@@ -102,18 +112,23 @@ fun AnalyticsScreen(
                 }
             }
         }
-        AccentCard(ComposePalette.tabLibraries()) {
-            TitleText(msg("analytics.graph.title"))
-            MutedText(msg("analytics.graph.hint"))
-            if (report.moduleMap.nodes.isEmpty()) {
-                MutedText(msg("analytics.graph.empty"))
-            } else {
-                ModuleGraphView(
-                    map = report.moduleMap,
-                    fullscreen = false,
-                    onToggleFullscreen = onOpenFullscreenGraph,
-                    onOpenModule = onOpenModule,
-                )
+        item(key = "graph") {
+            AccentCard(ComposePalette.tabLibraries()) {
+                TitleText(msg("analytics.graph.title"))
+                MutedText(msg("analytics.graph.hint"))
+                if (report.moduleMap.nodes.isEmpty()) {
+                    MutedText(msg("analytics.graph.empty"))
+                } else {
+                    Box(Modifier.fillMaxWidth().height(420.dp)) {
+                        ModuleGraphView(
+                            project = project,
+                            map = report.moduleMap,
+                            fullscreen = false,
+                            onToggleFullscreen = onOpenFullscreenGraph,
+                            onOpenModule = onOpenModule,
+                        )
+                    }
+                }
             }
         }
     }
@@ -122,18 +137,24 @@ fun AnalyticsScreen(
 @Composable
 private fun MetricRow(analytics: ProjectAnalytics, wide: Boolean, modifier: Modifier = Modifier) {
     val items = persistentListOf(
-        Triple(msg("analytics.metric.libraries"), analytics.thirdParty.size.toString(), ComposePalette.tabAnalytics()),
-        Triple(msg("analytics.metric.weight"), analytics.totalWeight.toString(), ComposePalette.tabUpdates()),
-        Triple(msg("analytics.metric.outdated"), analytics.outdatedCount.toString(), ComposePalette.status(StatusKind.Outdated)),
-        Triple(msg("analytics.metric.modules"), analytics.moduleCount.toString(), ComposePalette.current()),
+        MetricTile(msg("analytics.metric.libraries"), analytics.thirdParty.size.toString(), ComposePalette.tabAnalytics()),
+        MetricTile(msg("analytics.metric.weight"), analytics.totalWeight.toString(), ComposePalette.tabUpdates()),
+        MetricTile(msg("analytics.metric.outdated"), analytics.outdatedCount.toString(), ComposePalette.status(StatusKind.Outdated)),
+        MetricTile(msg("analytics.metric.modules"), analytics.moduleCount.toString(), ComposePalette.current()),
     )
     ResponsiveGrid(items = items, wide = wide, modifier = modifier) { item ->
-        AccentCard(item.third) {
-            MutedText(item.first)
-            TitleText(item.second)
+        AccentCard(item.color) {
+            MutedText(item.label)
+            TitleText(item.value)
         }
     }
 }
+
+private data class MetricTile(
+    val label: String,
+    val value: String,
+    val color: Color,
+)
 
 @Composable
 private fun WeightList(

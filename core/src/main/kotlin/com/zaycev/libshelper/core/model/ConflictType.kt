@@ -10,5 +10,6 @@ enum class ConflictType {
     RepositoryGap,
     TransitiveOverride,
     FamilyMix,
+    MixedFamilySharedRef,
 }
 

@@ -30,5 +30,6 @@ private fun mergeGroup(group: List<DeclaredDependency>): DeclaredDependency {
         module = withModule?.module ?: base.module,
         isPlugin = group.any { it.isPlugin },
         isBom = group.any { it.isBom },
+        referenced = group.any { it.source != DependencySource.Toml || it.resolvedUsageLocations().isNotEmpty() },
     )
 }

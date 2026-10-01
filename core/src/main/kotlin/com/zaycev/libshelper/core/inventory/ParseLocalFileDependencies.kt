@@ -28,15 +28,15 @@ fun parseLocalFileDependencies(
     val paths = linkedSetOf<Path>()
     FILES_BLOCK.findAll(text).forEach { block ->
         ARCHIVE_IN_QUOTES.findAll(block.groupValues[1]).forEach { match ->
-            paths.add(resolveLocal(moduleDir, match.groupValues[1]))
+            resolveLocal(moduleDir, match.groupValues[1])?.let { paths.add(it) }
         }
     }
     FILE_TREE_DIR.findAll(text).forEach { match ->
-        paths.addAll(archivesInDir(resolveLocal(moduleDir, match.groupValues[1])))
+        resolveLocal(moduleDir, match.groupValues[1])?.let { paths.addAll(archivesInDir(it)) }
     }
     if (text.contains("flatDir", ignoreCase = true)) {
         FLAT_DIR_DIRS.findAll(text).forEach { match ->
-            paths.addAll(archivesInDir(resolveLocal(moduleDir, match.groupValues[1])))
+            resolveLocal(moduleDir, match.groupValues[1])?.let { paths.addAll(archivesInDir(it)) }
         }
     }
     return paths.map { path ->
@@ -54,9 +54,10 @@ fun parseLocalFileDependencies(
     }
 }
 
-private fun resolveLocal(moduleDir: Path?, relative: String): Path {
+private fun resolveLocal(moduleDir: Path?, relative: String): Path? {
     val cleaned = relative.trim().removePrefix("./")
-    return if (moduleDir != null) moduleDir.resolve(cleaned).normalize() else Path.of(cleaned)
+    val base = moduleDir?.toAbsolutePath()?.normalize() ?: return Path.of(cleaned).normalize().takeUnless { it.isAbsolute }
+    return pathInsideRoot(base, cleaned)
 }
 
 private fun archivesInDir(dir: Path): List<Path> {

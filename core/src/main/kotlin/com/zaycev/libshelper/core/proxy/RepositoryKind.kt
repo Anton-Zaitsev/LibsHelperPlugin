@@ -27,7 +27,7 @@ private val PROXY_HINTS = listOf(
 
 fun detectRepositoryKind(url: String): RepositoryKind {
     val host = hostOf(url) ?: return RepositoryKind.Private
-    if (OFFICIAL_HOSTS.any { host == it || host.endsWith(".$it") }) {
+    if (host in OFFICIAL_HOSTS) {
         return RepositoryKind.Official
     }
     val lowered = url.lowercase()
@@ -84,6 +84,23 @@ fun officialGoogleMaven(): List<String> = listOf(
 fun officialPluginPortal(): String = "https://plugins.gradle.org/m2/"
 
 fun officialJitPack(): String = "https://jitpack.io/"
+
+fun officialJetBrainsCompose(): String = "https://maven.pkg.jetbrains.space/public/p/compose/dev/"
+
+fun isPublicCatalogHost(host: String): Boolean {
+    val normalized = host.lowercase()
+    return normalized in PUBLIC_CATALOG_HOSTS
+}
+
+private val PUBLIC_CATALOG_HOSTS = setOf(
+    "repo1.maven.org",
+    "repo.maven.apache.org",
+    "dl.google.com",
+    "maven.google.com",
+    "plugins.gradle.org",
+    "jitpack.io",
+    "maven.pkg.jetbrains.space",
+)
 
 fun hostOf(url: String): String? = runCatching {
     val normalized = if (url.contains("://")) url else "https://$url"

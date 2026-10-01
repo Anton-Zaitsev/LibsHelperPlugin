@@ -5,6 +5,9 @@ class SpatialGrid(
     private val originX: Float,
     private val originY: Float,
 ) {
+    init {
+        require(cell > 0f) { "cell must be positive" }
+    }
     private val buckets = HashMap<Long, IntArray>(64)
     private val counts = HashMap<Long, Int>(64)
 
@@ -111,10 +114,11 @@ fun hitCardIndex(
     worldY: Float,
     buffer: IntArray,
     sizeOut: IntArray,
+    cardWidths: FloatArray? = null,
 ): Int {
-    val halfW = GraphMetrics.CARD_W * HALF_CARD
     val halfH = GraphMetrics.CARD_H * HALF_CARD
-    grid.query(worldX - halfW, worldY - halfH, worldX + halfW, worldY + halfH, buffer, sizeOut)
+    val queryHalf = cardWidths?.let { widestHalf(it) } ?: (GraphMetrics.CARD_W * HALF_CARD)
+    grid.query(worldX - queryHalf, worldY - halfH, worldX + queryHalf, worldY + halfH, buffer, sizeOut)
     val limit = sizeOut[0]
     var best = -1
     var bestDist = Float.MAX_VALUE
@@ -122,6 +126,7 @@ fun hitCardIndex(
     while (i < limit) {
         val index = buffer[i]
         val node = map.nodes[index]
+        val halfW = halfWidthAt(cardWidths, index)
         val dx = node.x - worldX
         val dy = node.y - worldY
         val inside = dx <= halfW && dx >= -halfW && dy <= halfH && dy >= -halfH
@@ -135,6 +140,20 @@ fun hitCardIndex(
         i++
     }
     return best
+}
+
+private fun widestHalf(cardWidths: FloatArray): Float {
+    var widest = GraphMetrics.CARD_W
+    for (width in cardWidths) {
+        if (width.isFinite() && width > widest) widest = width
+    }
+    return widest * HALF_CARD
+}
+
+private fun halfWidthAt(cardWidths: FloatArray?, index: Int): Float {
+    val width = cardWidths?.getOrNull(index) ?: GraphMetrics.CARD_W
+    if (!width.isFinite() || width <= 0f) return GraphMetrics.CARD_W * HALF_CARD
+    return width * HALF_CARD
 }
 
 private const val HALF_CARD = 0.5f

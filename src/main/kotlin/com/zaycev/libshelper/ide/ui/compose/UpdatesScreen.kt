@@ -52,6 +52,7 @@ import com.zaycev.libshelper.core.model.LibraryLinks
 import com.zaycev.libshelper.core.model.LocalArtifactKind
 import com.zaycev.libshelper.core.model.OfferScore
 import com.zaycev.libshelper.core.model.ProjectReport
+import com.zaycev.libshelper.core.settings.settingLibraries
 import com.zaycev.libshelper.core.model.UpdateAdvice
 import com.zaycev.libshelper.core.model.VersionChannel
 import com.zaycev.libshelper.ide.apply.canApplyLibraryVersion
@@ -93,18 +94,16 @@ fun UpdatesScreen(
     modifier: Modifier = Modifier,
 ) {
     val query = searchState.text.toString()
-    val items = remember(report, query, outdatedOnly) {
-        report.libraries.filter { item ->
+    val listed = remember(report) { report.libraries + settingLibraries(report) }
+    val items = remember(listed, query, outdatedOnly) {
+        listed.filter { item ->
             val outdatedOk = !outdatedOnly || item.advice.isOutdated
             val needle = query.trim().lowercase()
-            val matches = needle.isEmpty() ||
-                item.advice.dependency.coordinates.key.lowercase().contains(needle) ||
-                item.advice.dependency.catalogAlias.orEmpty().lowercase().contains(needle)
-            outdatedOk && matches
+            outdatedOk && item.matchesQuery(needle)
         }.toPersistentList()
     }
-    val selected = items.firstOrNull { it.advice.dependency.coordinates.key == selectedKey }
-        ?: items.firstOrNull()
+    val selected = items.firstOrNull { it.matchesListKey(selectedKey) }
+        ?: items.firstOrNull().takeIf { selectedKey == null }
     val listState = rememberLazyListState()
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(selected?.advice?.dependency?.coordinates?.key) {
@@ -123,7 +122,7 @@ fun UpdatesScreen(
     }
     fun applyRecommended() {
         val item = selected ?: return
-        val version = heroOffer(item.advice)?.first?.version?.raw ?: return
+        val version = heroOffer(item.advice)?.offer?.version?.raw ?: return
         onApply(item.advice.dependency, version)
     }
     if (compact) {
@@ -306,7 +305,7 @@ private fun LibraryRow(
     modifier: Modifier = Modifier,
 ) {
     val status = statusOf(item.advice)
-    val tone = ComposePalette.status(status.second)
+    val tone = ComposePalette.status(status.kind)
     val bg = if (selected) ComposePalette.tabUpdates().copy(alpha = 0.18f) else ComposePalette.cardFill()
     Row(
         modifier = modifier
@@ -325,7 +324,7 @@ private fun LibraryRow(
         Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
             TitleText("${item.advice.dependency.coordinates.artifact}  ${item.advice.current?.raw ?: "—"}")
             MutedText(
-                "${item.advice.dependency.coordinates.group} · ${status.first}",
+                "${item.advice.dependency.coordinates.group} · ${status.text}",
                 Modifier.padding(top = 2.dp),
             )
         }
@@ -350,23 +349,27 @@ private fun LibraryDetail(
         report.inventory.dependencies.filter { it.coordinates.key == dep.coordinates.key }
     }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        TitleText(dep.coordinates.key, Modifier.padding(end = 8.dp))
+        TitleText(dep.listTitle(), Modifier.padding(end = 8.dp))
         PillRow {
-            val moduleLabel = if (dep.module == ":") msg("badge.root") else dep.module
-            Link(moduleLabel, onClick = { openDependencyUsage(project, dep) })
-            MutedText(dep.configuration)
+            if (dep.configuration !in settingConfigurations) {
+                val moduleLabel = if (dep.module == ":") msg("badge.root") else dep.module
+                Link(moduleLabel, onClick = { openDependencyUsage(project, dep) })
+                MutedText(dep.configuration)
+            }
             dep.catalogAlias?.let { alias ->
                 Link(msg("source.catalog", alias), onClick = { openDependencyCatalog(project, dep) })
             }
             dep.localFileName?.let { MutedText(it) }
         }
         PillRow {
-            Pill(status.first, ComposePalette.status(status.second))
+            Pill(status.text, ComposePalette.status(status.kind))
             Pill(advice.current?.raw ?: msg("badge.noVersion"), ComposePalette.current())
-            if (report.metadataFromProxyOnly) {
-                Pill(msg("badge.backup"), ComposePalette.status(StatusKind.Rc))
-            } else {
-                Pill(msg("badge.official"), ComposePalette.status(StatusKind.Current))
+            when {
+                dep.configuration in settingConfigurations ->
+                    Pill(msg("setting.source.badge"), ComposePalette.status(StatusKind.Current))
+                report.metadataFromProxyOnly ->
+                    Pill(msg("badge.backup"), ComposePalette.status(StatusKind.Rc))
+                else -> Pill(msg("badge.official"), ComposePalette.status(StatusKind.Current))
             }
             if (dep.isLocalArtifact) {
                 Pill(
@@ -393,8 +396,8 @@ private fun LibraryDetail(
         if (hero != null) {
             VersionCard(
                 item = item,
-                offer = hero.first,
-                title = hero.second,
+                offer = hero.offer,
+                title = hero.title,
                 showScore = false,
                 applyLabel = msg("action.apply"),
                 onApply = onApply,
@@ -403,7 +406,7 @@ private fun LibraryDetail(
             CurrentCard(advice)
         }
         val variants = listOfNotNull(advice.latestRc, advice.latestBeta, advice.latestAlpha)
-            .filter { it.version.raw != hero?.first?.version?.raw }
+            .filter { it.version.raw != hero?.offer?.version?.raw }
             .toPersistentList()
         if (variants.isNotEmpty()) {
             OtherVersions(item, variants, compact, wide, onApply)
@@ -413,32 +416,45 @@ private fun LibraryDetail(
             onClick = { detailsOpen = !detailsOpen },
         )
         if (detailsOpen) {
-            if (!report.metadataFromProxyOnly) {
-                MutedText(originText(hero?.first?.origin?.kind ?: advice.latestRc?.origin?.kind))
+            if (dep.configuration in settingConfigurations) {
+                MutedText(msg("setting.source.body"))
+                ExternalLink(
+                    text = msg("setting.source.link"),
+                    uri = hero?.offer?.origin?.url ?: ANDROID_SDK_REPOSITORY,
+                )
+            } else {
+                if (!report.metadataFromProxyOnly) {
+                    MutedText(originText(hero?.offer?.origin?.kind ?: advice.latestRc?.origin?.kind))
+                }
+                lookupErrorText(item.lookupError)?.let { MutedText(it) }
+                TitleText(msg("analytics.modules.title"))
+                MutedText(
+                    siblings.map { entry ->
+                        val module = if (entry.module == ":") msg("badge.root") else entry.module
+                        "$module · ${entry.configuration}"
+                    }.distinct().joinToString("\n").ifBlank { dep.module },
+                )
+                LinksRow(item.links)
             }
-            lookupErrorText(item.lookupError)?.let { MutedText(it) }
-            TitleText(msg("analytics.modules.title"))
-            MutedText(
-                siblings.map { entry ->
-                    val module = if (entry.module == ":") msg("badge.root") else entry.module
-                    "$module · ${entry.configuration}"
-                }.distinct().joinToString("\n").ifBlank { dep.module },
-            )
-            LinksRow(item.links)
         }
     }
 }
 
-internal fun heroOffer(advice: UpdateAdvice): Pair<ChannelOffer, String>? {
+internal data class HeroOffer(
+    val offer: ChannelOffer,
+    val title: String,
+)
+
+internal fun heroOffer(advice: UpdateAdvice): HeroOffer? {
     if (!advice.isOutdated) return null
-    advice.preferredStable?.let { return it to msg("offer.recommended") }
+    advice.preferredStable?.let { return HeroOffer(it, msg("offer.recommended")) }
     val onChannel = when (advice.currentChannel) {
         VersionChannel.ReleaseCandidate -> advice.latestRc
         VersionChannel.Beta -> advice.latestBeta
         VersionChannel.Alpha, VersionChannel.Snapshot -> advice.latestAlpha
         else -> null
     }
-    return onChannel?.let { it to msg("offer.newer") }
+    return onChannel?.let { HeroOffer(it, msg("offer.newer")) }
 }
 
 @Composable
@@ -565,6 +581,30 @@ private fun OtherVersions(
         }
     }
 }
+
+private val settingConfigurations = setOf("CompileSdk", "TargetSdk", "Ndk")
+
+private const val ANDROID_SDK_REPOSITORY = "https://dl.google.com/android/repository/repository2-3.xml"
+
+private fun LibraryAdvice.matchesQuery(needle: String): Boolean {
+    if (needle.isEmpty()) return true
+    val dependency = advice.dependency
+    return dependency.coordinates.key.lowercase().contains(needle) ||
+        dependency.coordinates.artifact.lowercase().contains(needle) ||
+        dependency.catalogAlias.orEmpty().lowercase().contains(needle) ||
+        dependency.versionRef.orEmpty().lowercase().contains(needle)
+}
+
+private fun LibraryAdvice.matchesListKey(key: String?): Boolean {
+    if (key.isNullOrBlank()) return false
+    val dependency = advice.dependency
+    return dependency.coordinates.key == key ||
+        dependency.catalogAlias == key ||
+        dependency.versionRef == key
+}
+
+private fun DeclaredDependency.listTitle(): String =
+    if (configuration in settingConfigurations) catalogAlias ?: coordinates.artifact else coordinates.key
 
 @Composable
 private fun LinksRow(links: LibraryLinks, modifier: Modifier = Modifier) {

@@ -31,10 +31,46 @@ internal fun stripNamedBlocks(text: String, vararg names: String): String {
     return result
 }
 
-private fun matchingBrace(text: String, openIndex: Int): Int? {
+@Suppress("CyclomaticComplexMethod")
+internal fun matchingBrace(text: String, openIndex: Int): Int? {
     var depth = 0
+    var quote: Char? = null
+    var escaped = false
+    var lineComment = false
+    var blockComment = false
     for (i in openIndex until text.length) {
-        when (text[i]) {
+        val char = text[i]
+        val next = text.getOrNull(i + 1)
+        if (lineComment) {
+            if (char == '\n') lineComment = false
+            continue
+        }
+        if (blockComment) {
+            if (char == '*' && next == '/') blockComment = false
+            continue
+        }
+        if (quote != null) {
+            if (escaped) {
+                escaped = false
+                continue
+            }
+            if (char == '\\' && quote == '"') {
+                escaped = true
+                continue
+            }
+            if (char == quote) quote = null
+            continue
+        }
+        if (char == '/' && next == '/') {
+            lineComment = true
+            continue
+        }
+        if (char == '/' && next == '*') {
+            blockComment = true
+            continue
+        }
+        when (char) {
+            '"', '\'' -> quote = char
             '{' -> depth++
             '}' -> {
                 depth--

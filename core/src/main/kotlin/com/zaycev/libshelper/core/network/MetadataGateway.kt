@@ -8,6 +8,8 @@ interface MetadataGateway {
         url: String,
         httpProxy: HttpProxySettings?,
         credentials: RepositoryAuth? = null,
-        allowAuthPrompt: Boolean = true,
+        allowAuthPrompt: Boolean = false,
     ): HttpGetResult
+
+    fun resetAuthPrompts() {}
 }

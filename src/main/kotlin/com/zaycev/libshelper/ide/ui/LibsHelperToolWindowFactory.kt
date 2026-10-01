@@ -1,6 +1,8 @@
 package com.zaycev.libshelper.ide.ui
 
+import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.components.service
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindow
@@ -19,8 +21,8 @@ class LibsHelperToolWindowFactory : ToolWindowFactory, DumbAware {
         connection.subscribe(
             LocaleChangeListener.TOPIC,
             LocaleChangeListener {
-                ApplicationManager.getApplication().invokeLater {
-                    if (!project.isDisposed) install(project, toolWindow)
+                project.service<com.zaycev.libshelper.ide.LibsHelperService>().launchEdt {
+                    install(project, toolWindow)
                 }
             },
         )
@@ -37,5 +39,8 @@ class LibsHelperToolWindowFactory : ToolWindowFactory, DumbAware {
         content.isCloseable = false
         manager.addContent(content)
         toolWindow.stripeTitle = msg("app.title")
+        ActionManager.getInstance().getAction("com.zaycev.libshelper.ReportProblem")?.let { action ->
+            toolWindow.setTitleActions(listOf(action))
+        }
     }
 }

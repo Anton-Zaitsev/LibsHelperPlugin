@@ -1,13 +1,14 @@
 package com.zaycev.libshelper.core.analysis
 
-import com.zaycev.libshelper.core.analytics.projectAnalytics
+import com.zaycev.libshelper.core.analytics.AnalyticsComputer
+import com.zaycev.libshelper.core.analytics.analyticsInput
 import com.zaycev.libshelper.core.graph.layoutModuleMap
 import com.zaycev.libshelper.core.cache.MetadataCache
 import com.zaycev.libshelper.core.concurrency.DispatcherProvider
 import com.zaycev.libshelper.core.di.AppScope
 import com.zaycev.libshelper.core.inventory.LOCAL_FILE_GROUP
 import com.zaycev.libshelper.core.inventory.mergeUniqueDependencies
-import com.zaycev.libshelper.core.inventory.projectFingerprint
+import com.zaycev.libshelper.core.inventory.projectTree
 import com.zaycev.libshelper.core.inventory.scanProject
 import com.zaycev.libshelper.core.links.libraryLinksOf
 import com.zaycev.libshelper.core.log.LibsHelperLogger
@@ -23,7 +24,12 @@ import com.zaycev.libshelper.core.network.MetadataGateway
 import com.zaycev.libshelper.core.network.NetworkTimeouts
 import com.zaycev.libshelper.core.progress.AnalysisProgress
 import com.zaycev.libshelper.core.proxy.buildScanPlan
+import com.zaycev.libshelper.core.recommend.alignSharedVersionRefs
 import com.zaycev.libshelper.core.recommend.buildAdvice
+import com.zaycev.libshelper.core.settings.PlatformFactsSource
+import com.zaycev.libshelper.core.settings.VersionSourceText
+import com.zaycev.libshelper.core.settings.adviseProjectSettings
+import com.zaycev.libshelper.core.settings.indexVersionUsages
 import dev.zacsweers.metro.ContributesBinding
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
@@ -48,20 +54,21 @@ internal class AnalysisOrchestrator(
     private val cache: MetadataCache,
     private val dispatchers: DispatcherProvider,
     private val logger: LibsHelperLogger,
+    private val analytics: AnalyticsComputer,
+    private val platformFacts: PlatformFactsSource,
 ) : AnalysisRunner {
-    private val lastFingerprint = AtomicReference<String?>(null)
-    private val lastReport = AtomicReference<ProjectReport?>(null)
+    private val stored = AtomicReference<StoredReport?>(null)
 
     override fun invalidate() {
         cache.clear()
-        lastFingerprint.set(null)
-        lastReport.set(null)
+        gateway.resetAuthPrompts()
+        stored.set(null)
         logger.info("Кеш анализа очищен")
     }
 
     override fun rememberReport(report: ProjectReport) {
-        lastReport.set(report)
-        lastFingerprint.set(report.fingerprint)
+        val fingerprint = report.fingerprint ?: return
+        stored.set(StoredReport(fingerprint, report))
     }
 
     override suspend fun analyze(
@@ -71,47 +78,54 @@ internal class AnalysisOrchestrator(
         onProgress: (AnalysisProgress) -> Unit,
     ): ProjectReport = withContext(dispatchers.io) {
         if (forceRefresh) invalidate()
-        val fingerprint = projectFingerprint(root)
-        val cached = lastReport.get()
-        if (!forceRefresh && fingerprint == lastFingerprint.get() && cached != null) {
+        val normalized = root.toAbsolutePath().normalize()
+        val tree = projectTree(normalized)
+        val fingerprint = tree.fingerprint
+        val cached = stored.get()
+        if (!forceRefresh && cached != null && cached.fingerprint == fingerprint) {
             logger.info("Проект не менялся — отдаём кешированный отчёт")
-            onPlan(cached.scanPlan)
+            onPlan(cached.report.scanPlan)
             onProgress(
                 progress(
                     currentCoordinates = null,
                     currentHost = null,
-                    completed = cached.libraries.size,
-                    total = cached.libraries.size,
+                    completed = cached.report.libraries.size,
+                    total = cached.report.libraries.size,
                     lastOutcome = "project_cache",
                     lastDurationMs = 0,
                     usingCache = true,
                 ),
             )
-            return@withContext cached.copy(servedFromCache = true)
+            return@withContext cached.report.copy(servedFromCache = true)
         }
 
-        val inventory = scanProject(root)
+        val inventory = scanProject(normalized, tree)
         val plan = buildScanPlan(inventory)
         onPlan(plan)
         val unique = mergeUniqueDependencies(inventory.dependencies)
+            .sortedBy { if (it.referenced) 0 else 1 }
         val total = unique.size
         val completed = AtomicInteger(0)
         logger.info("Сканирование: ${inventory.modules.size} модулей, $total библиотек")
         onProgress(progress(null, null, 0, total, "inventory_ready", 0, false))
 
         val semaphore = Semaphore(NetworkTimeouts.PARALLEL_LIMIT)
+        val progressGate = Any()
         val libraries = supervisorScope {
             unique.map { dependency ->
                 async(dispatchers.io) {
                     semaphore.withPermit {
-                        lookupOne(dependency, inventory, forceRefresh, completed, total, onProgress)
+                        lookupOne(dependency, inventory, forceRefresh, completed, total) { update ->
+                            synchronized(progressGate) { onProgress(update) }
+                        }
                     }
                 }
             }.awaitAll()
-        }.sortedWith(
-            compareByDescending<LibraryAdvice> { it.advice.isOutdated }
-                .thenBy { it.advice.dependency.coordinates.key },
-        )
+        }.let { found -> alignSharedVersionRefs(found, inventory) }
+            .sortedWith(
+                compareByDescending<LibraryAdvice> { it.advice.isOutdated }
+                    .thenBy { it.advice.dependency.coordinates.key },
+            )
 
         val draft = ProjectReport(
             inventory = inventory,
@@ -126,13 +140,23 @@ internal class AnalysisOrchestrator(
         )
         val report = coroutineScope {
             val flush = async { cache.flush() }
-            val analytics = async(dispatchers.default) { projectAnalytics(draft) }
+            val analyticsJob = async(dispatchers.default) { analytics.compute(draft.analyticsInput()) }
             val moduleMap = async(dispatchers.default) { layoutModuleMap(inventory.moduleGraph) }
+            val usages = indexVersionUsages(
+                inventory.versionSources.entries.map { entry -> VersionSourceText(entry.key, entry.value) },
+                inventory.catalogVersions.keys,
+            )
+            val facts = platformFacts.load(inventory.httpProxy)
+            val settings = adviseProjectSettings(usages, inventory.catalogVersions, facts)
             flush.await()
-            draft.copy(analytics = analytics.await(), moduleMap = moduleMap.await())
+            draft.copy(
+                analytics = analyticsJob.await(),
+                moduleMap = moduleMap.await(),
+                buildSettings = settings.toPersistentList(),
+                versionUsages = usages.toPersistentList(),
+            )
         }
-        lastFingerprint.set(fingerprint)
-        lastReport.set(report)
+        stored.set(StoredReport(fingerprint, report))
         report
     }
 
@@ -260,3 +284,8 @@ internal class AnalysisOrchestrator(
         usingCache = usingCache,
     )
 }
+
+private data class StoredReport(
+    val fingerprint: String,
+    val report: ProjectReport,
+)

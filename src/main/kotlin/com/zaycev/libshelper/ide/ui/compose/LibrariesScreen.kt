@@ -2,16 +2,17 @@ package com.zaycev.libshelper.ide.ui.compose
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.zaycev.libshelper.core.model.LibraryAdvice
 import com.zaycev.libshelper.core.model.ProjectReport
+import com.zaycev.libshelper.core.settings.settingLibraries
 import com.zaycev.libshelper.ide.i18n.msg
 import com.zaycev.libshelper.ide.ui.StatusKind
 import com.zaycev.libshelper.ide.ui.statusOf
@@ -23,30 +24,35 @@ fun LibrariesScreen(
     onOpenLibrary: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val scroll = rememberScrollState()
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(scroll)
-            .padding(12.dp),
+    val items = remember(report) { report.libraries + settingLibraries(report) }
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(if (wide) 16.dp else 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        if (report.libraries.isEmpty()) {
-            AccentCard(ComposePalette.muted()) {
-                TitleText(msg("empty.noLibraries"))
-                if (!report.inventory.catalogPresent) {
-                    MutedText(msg("banner.noCatalog.body"))
-                } else {
-                    MutedText(msg("banner.scriptsOnly"))
+        if (items.isEmpty()) {
+            item {
+                AccentCard(ComposePalette.muted()) {
+                    TitleText(msg("empty.noLibraries"))
+                    if (!report.inventory.catalogPresent) {
+                        MutedText(msg("banner.noCatalog.body"))
+                    } else {
+                        MutedText(msg("banner.scriptsOnly"))
+                    }
                 }
             }
         } else {
-            ResponsiveGrid(items = report.libraries, wide = wide) { item ->
-                LibraryOverviewCard(item, onOpenLibrary)
+            items(
+                count = items.size,
+                key = { index -> items[index].advice.dependency.coordinates.key + index },
+            ) { index ->
+                LibraryOverviewCard(items[index], onOpenLibrary)
             }
         }
     }
 }
+
+private val settingConfigurations = setOf("CompileSdk", "TargetSdk", "Ndk")
 
 @Composable
 private fun LibraryOverviewCard(
@@ -60,12 +66,17 @@ private fun LibraryOverviewCard(
     } else {
         ComposePalette.status(StatusKind.Current)
     }
-    val alias = item.advice.dependency.catalogAlias
-    val source = if (alias != null) msg("source.catalog", alias) else item.advice.dependency.source.name
+    val dependency = item.advice.dependency
+    val alias = dependency.catalogAlias
+    val source = if (alias != null) msg("source.catalog", alias) else dependency.source.name
     val current = item.advice.current?.raw ?: "—"
-    val key = item.advice.dependency.coordinates.key
+    val key = if (dependency.configuration in settingConfigurations) {
+        alias ?: dependency.coordinates.artifact
+    } else {
+        dependency.coordinates.key
+    }
     AccentCard(accent, modifier = modifier.clickable { onOpenLibrary(key) }) {
         TitleText(key)
-        MutedText("$current · ${status.first} · $source")
+        MutedText("$current · ${status.text} · $source")
     }
 }

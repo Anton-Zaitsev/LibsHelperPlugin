@@ -16,7 +16,7 @@ fun projectRepositoriesFor(
     val usable = scoped.filter {
         it.type != RepositoryType.FlatDir && it.type != RepositoryType.MavenLocal
     }
-    val exclusiveHits = usable.filter { it.exclusive && it.servesGroup(coordinates.group) }
+    val exclusiveHits = usable.filter { it.exclusive && it.serves(coordinates.group, coordinates.artifact) }
     if (exclusiveHits.isNotEmpty()) return exclusiveHits.distinctBy { it.url }
-    return usable.filter { !it.exclusive && it.servesGroup(coordinates.group) }
+    return usable.filter { !it.exclusive && it.serves(coordinates.group, coordinates.artifact) }
 }

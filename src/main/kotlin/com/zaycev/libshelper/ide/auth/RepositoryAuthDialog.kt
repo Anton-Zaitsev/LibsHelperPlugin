@@ -30,6 +30,7 @@ internal class RepositoryAuthDialog(
     initialHost: String,
     private val reason: String,
     private val initial: RepositoryAuth? = null,
+    private val hostLocked: Boolean = false,
 ) : DialogWrapper(project) {
     private val hostField = JBTextField(initialHost)
     private val schemeBox = ComboBox(
@@ -70,6 +71,7 @@ internal class RepositoryAuthDialog(
         schemeBox.addItemListener { event ->
             if (event.stateChange == ItemEvent.SELECTED) toggleFields()
         }
+        hostField.isEditable = !hostLocked
         toggleFields()
         init()
         setSize(JBUI.scale(DIALOG_WIDTH_PX), JBUI.scale(DIALOG_HEIGHT_PX))
@@ -107,7 +109,7 @@ internal class RepositoryAuthDialog(
             }
     }
 
-    override fun getPreferredFocusedComponent(): JComponent = hostField
+    override fun getPreferredFocusedComponent(): JComponent = if (hostLocked) secretField else hostField
 
     private fun toggleFields() {
         val scheme = schemeBox.selectedItem as? RepositoryAuthScheme ?: RepositoryAuthScheme.Basic

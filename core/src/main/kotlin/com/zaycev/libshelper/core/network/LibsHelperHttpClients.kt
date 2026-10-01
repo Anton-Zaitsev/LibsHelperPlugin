@@ -18,23 +18,29 @@ internal class LibsHelperHttpClients : AutoCloseable {
     private val clients = ConcurrentHashMap<String, HttpClient>()
 
     fun client(httpProxy: HttpProxySettings?): HttpClient {
-        check(!closed.get()) { "HttpClient already closed" }
         val key = httpProxy?.let { "${it.host}:${it.port}" } ?: DIRECT_KEY
-        return clients.computeIfAbsent(key) { create(httpProxy) }
+        return synchronized(clients) {
+            check(!closed.get()) { "HttpClient already closed" }
+            clients.computeIfAbsent(key) { create(httpProxy) }
+        }
     }
 
     private fun create(httpProxy: HttpProxySettings?): HttpClient =
         HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
-            .followRedirects(HttpClient.Redirect.NORMAL)
+            .followRedirects(HttpClient.Redirect.NEVER)
             .connectTimeout(Duration.ofMillis(NetworkTimeouts.CONNECTION_MS))
             .proxy(proxySelector(httpProxy))
             .build()
 
     override fun close() {
-        if (!closed.compareAndSet(false, true)) return
-        clients.values.forEach { runCatching { it.close() } }
-        clients.clear()
+        val snapshot = synchronized(clients) {
+            if (!closed.compareAndSet(false, true)) return
+            val values = clients.values.toList()
+            clients.clear()
+            values
+        }
+        snapshot.forEach { runCatching { it.close() } }
     }
 }
 

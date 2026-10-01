@@ -14,6 +14,7 @@ import com.zaycev.libshelper.core.model.OfferScore
 import com.zaycev.libshelper.core.model.ProjectInventory
 import com.zaycev.libshelper.core.model.Severity
 import com.zaycev.libshelper.core.model.UpdateAdvice
+import com.zaycev.libshelper.core.model.VersionCandidate
 import com.zaycev.libshelper.core.model.VersionChannel
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentList
@@ -77,6 +78,10 @@ fun buildAdvice(
         latestAlpha = latest.alpha?.takeIf { it.raw != current?.raw }?.let {
             offer(VersionChannel.Alpha, it, current, currentChannel, false, origin, inventory, dependency, proxyMissingOfficial, sameLine)
         },
+        candidates = versions.mapNotNull { raw ->
+            val channel = classifyVersion(raw) ?: return@mapNotNull null
+            VersionCandidate(MavenVersion.parse(raw), channel, origin)
+        },
     )
 }
 
@@ -92,10 +97,12 @@ internal fun isVersionOutdated(
         VersionChannel.Beta -> latest.beta
         VersionChannel.Alpha -> latest.alpha
         VersionChannel.Snapshot -> latest.snapshot
+        VersionChannel.Dev -> null
         VersionChannel.Stable, null -> latestStable
     }
     return when (currentChannel) {
         null, VersionChannel.Stable -> latestStable != null && latestStable > current
+        VersionChannel.Dev -> latestStable != null && latestStable > current
         else -> {
             val newerStable = latestStable != null && latestStable > current
             val newerOnChannel = latestOnChannel != null && latestOnChannel > current
@@ -157,7 +164,7 @@ fun scoreOf(channel: VersionChannel, conflicts: List<ConflictSignal>): OfferScor
             }
         }
         VersionChannel.ReleaseCandidate, VersionChannel.Beta -> OfferScore.Risky
-        VersionChannel.Alpha, VersionChannel.Snapshot -> OfferScore.DoNot
+        VersionChannel.Alpha, VersionChannel.Snapshot, VersionChannel.Dev -> OfferScore.DoNot
     }
 }
 
@@ -197,7 +204,7 @@ fun consequencesFor(
         }
         VersionChannel.ReleaseCandidate -> items += Consequence(ConsequenceId.Rc)
         VersionChannel.Beta -> items += Consequence(ConsequenceId.Beta)
-        VersionChannel.Alpha, VersionChannel.Snapshot -> items += Consequence(ConsequenceId.Alpha)
+        VersionChannel.Alpha, VersionChannel.Snapshot, VersionChannel.Dev -> items += Consequence(ConsequenceId.Alpha)
     }
     if (origin.kind == MetadataOriginKind.ProjectProxy) {
         items += Consequence(ConsequenceId.DataFromProxy)

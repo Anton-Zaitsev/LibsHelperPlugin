@@ -3,12 +3,16 @@ package com.zaycev.libshelper.core.versioning
 import com.zaycev.libshelper.core.model.VersionChannel
 
 private val DYNAMIC = Regex(""".*[+]|^.*\.\+$|^.*\+$""")
+private val DEV_BUILD = Regex("""(?i)(?:^|[.\-_+])dev(?:[.\-_]?\d+)?$|(?:^|[.\-_])eap(?:[.\-_]\d+)?$""")
+private val RANGE = Regex("""^[\[(].*[\])]$""")
 private val SNAPSHOT = Regex("""(?i)(^|[.\-_])snapshot([.\-_]|$)|-snapshot$""")
 private val COMPAT = setOf("compat")
 
 fun classifyVersion(raw: String): VersionChannel? {
     val value = raw.trim()
     if (value.isEmpty()) return null
+    if (RANGE.matches(value)) return null
+    if (DEV_BUILD.containsMatchIn(value)) return VersionChannel.Dev
     if (DYNAMIC.matches(value) || value.endsWith(".+") || value == "+") return null
 
     val qualifiers = MavenVersion.parse(value).tokens
@@ -19,9 +23,10 @@ fun classifyVersion(raw: String): VersionChannel? {
 
     return when {
         SNAPSHOT.containsMatchIn(value) || qualifiers.any { it == "snapshot" } -> VersionChannel.Snapshot
-        qualifiers.any { it == "alpha" || it == "a" } -> VersionChannel.Alpha
-        qualifiers.any { it == "beta" || it == "b" } -> VersionChannel.Beta
-        qualifiers.any { it == "rc" || it == "cr" } -> VersionChannel.ReleaseCandidate
+        qualifiers.any { it == "dev" || it == "eap" } -> VersionChannel.Dev
+        qualifiers.any { it == "alpha" } -> VersionChannel.Alpha
+        qualifiers.any { it == "beta" } -> VersionChannel.Beta
+        qualifiers.any { it == "rc" } -> VersionChannel.ReleaseCandidate
         qualifiers.any { it in COMPAT } -> VersionChannel.ReleaseCandidate
         else -> VersionChannel.Stable
     }
@@ -29,10 +34,7 @@ fun classifyVersion(raw: String): VersionChannel? {
 
 private val EXCLUDED = setOf(
     "milestone",
-    "m",
     "preview",
-    "dev",
-    "eap",
     "canary",
     "pre",
 )
@@ -43,6 +45,7 @@ data class ChannelLatest(
     val beta: MavenVersion?,
     val alpha: MavenVersion?,
     val snapshot: MavenVersion? = null,
+    val dev: MavenVersion? = null,
 )
 
 fun latestPerChannel(versions: Collection<String>): ChannelLatest {
@@ -55,6 +58,7 @@ fun latestPerChannel(versions: Collection<String>): ChannelLatest {
         beta = grouped[VersionChannel.Beta]?.maxOrNull(),
         alpha = grouped[VersionChannel.Alpha]?.maxOrNull(),
         snapshot = grouped[VersionChannel.Snapshot]?.maxOrNull(),
+        dev = grouped[VersionChannel.Dev]?.maxOrNull(),
     )
 }
 

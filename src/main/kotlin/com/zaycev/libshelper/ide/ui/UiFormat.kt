@@ -19,19 +19,24 @@ import com.zaycev.libshelper.ide.i18n.msg
 
 enum class StatusKind { Outdated, Current, Alpha, Beta, Rc, Snapshot }
 
-internal fun statusOf(advice: UpdateAdvice): Pair<String, StatusKind> = when {
+internal data class StatusLabel(
+    val text: String,
+    val kind: StatusKind,
+)
+
+internal fun statusOf(advice: UpdateAdvice): StatusLabel = when {
     advice.isOutdated -> {
         val target = advice.preferredStable?.version?.raw
             ?: advice.latestRc?.version?.raw
             ?: advice.latestBeta?.version?.raw
             ?: advice.latestAlpha?.version?.raw
-        (target ?: msg("status.outdated")) to StatusKind.Outdated
+        StatusLabel(target ?: msg("status.outdated"), StatusKind.Outdated)
     }
-    advice.currentChannel == VersionChannel.Alpha -> msg("status.alpha") to StatusKind.Alpha
-    advice.currentChannel == VersionChannel.Beta -> msg("status.beta") to StatusKind.Beta
-    advice.currentChannel == VersionChannel.ReleaseCandidate -> msg("status.rc") to StatusKind.Rc
-    advice.currentChannel == VersionChannel.Snapshot -> msg("status.snapshot") to StatusKind.Snapshot
-    else -> msg("status.current") to StatusKind.Current
+    advice.currentChannel == VersionChannel.Alpha -> StatusLabel(msg("status.alpha"), StatusKind.Alpha)
+    advice.currentChannel == VersionChannel.Beta -> StatusLabel(msg("status.beta"), StatusKind.Beta)
+    advice.currentChannel == VersionChannel.ReleaseCandidate -> StatusLabel(msg("status.rc"), StatusKind.Rc)
+    advice.currentChannel == VersionChannel.Snapshot -> StatusLabel(msg("status.snapshot"), StatusKind.Snapshot)
+    else -> StatusLabel(msg("status.current"), StatusKind.Current)
 }
 
 internal fun channelLabel(channel: VersionChannel): String = when (channel) {
@@ -40,6 +45,7 @@ internal fun channelLabel(channel: VersionChannel): String = when (channel) {
     VersionChannel.Beta -> msg("channel.beta")
     VersionChannel.Alpha -> msg("channel.alpha")
     VersionChannel.Snapshot -> msg("channel.snapshot")
+    VersionChannel.Dev -> msg("channel.dev")
 }
 
 internal fun scoreLabel(score: OfferScore): String = when (score) {
@@ -102,6 +108,7 @@ internal fun conflictText(signal: ConflictSignal): String {
         } else {
             msg("conflict.family.guava")
         }
+        ConflictType.MixedFamilySharedRef -> msg("conflict.mixedFamily", at(0))
     }
 }
 

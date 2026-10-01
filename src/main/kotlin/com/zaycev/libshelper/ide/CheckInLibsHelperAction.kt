@@ -14,7 +14,7 @@ class CheckInLibsHelperAction : AnAction() {
         val editor = event.getData(CommonDataKeys.EDITOR)
         val selection = editor?.selectionModel?.selectedText?.trim()
         if (!selection.isNullOrBlank()) {
-            project.service<LibsHelperService>().selectedKey = selection
+            project.service<LibsHelperService>().selectLibrary(selection)
         }
         project.service<LibsHelperService>().refresh()
         ToolWindowManager.getInstance(project).getToolWindow("LibsHelper")?.activate(null)

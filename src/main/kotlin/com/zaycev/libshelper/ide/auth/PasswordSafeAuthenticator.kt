@@ -18,7 +18,7 @@ internal class PasswordSafeAuthenticator(
 ) : RepositoryAuthenticator {
     private val settings = RepoAuthSettings.getInstance(project)
 
-    override fun stored(host: String): RepositoryAuth? {
+    override fun stored(host: String): RepositoryAuth? = blockingCredentials(project) {
         val secret = PasswordSafe.instance.get(attributes(host))?.getPasswordAsString().orEmpty()
         val profile = settings.profiles().firstOrNull { it.host == host }
         if (profile != null) {
@@ -30,15 +30,19 @@ internal class PasswordSafeAuthenticator(
                 secret = secret,
                 headerName = profile.headerName,
             )
-            return auth.takeUnless { it.isBlank }
+            auth.takeUnless { it.isBlank }
+        } else {
+            val stored = PasswordSafe.instance.get(attributes(host))
+            val user = stored?.userName.orEmpty()
+            if (stored == null || secret.isBlank()) {
+                null
+            } else {
+                RepositoryAuth(RepositoryAuthScheme.Basic, user, secret).takeUnless { it.isBlank }
+            }
         }
-        val stored = PasswordSafe.instance.get(attributes(host)) ?: return null
-        val user = stored.userName.orEmpty()
-        if (secret.isBlank()) return null
-        return RepositoryAuth(RepositoryAuthScheme.Basic, user, secret).takeUnless { it.isBlank }
     }
 
-    override fun profiles(): List<RepositoryAuthProfile> {
+    override fun profiles(): List<RepositoryAuthProfile> = blockingCredentials(project) {
         val fromSettings = settings.profiles().map { profile ->
             val scheme = runCatching { RepositoryAuthScheme.valueOf(profile.scheme) }
                 .getOrDefault(RepositoryAuthScheme.Basic)
@@ -51,11 +55,11 @@ internal class PasswordSafeAuthenticator(
                 hasSecret = !PasswordSafe.instance.get(attributes(host))?.getPasswordAsString().isNullOrBlank(),
             )
         }
-        return fromSettings
+        fromSettings
     }
 
-    override fun save(host: String, auth: RepositoryAuth) {
-        if (host.isBlank()) return
+    override fun save(host: String, auth: RepositoryAuth) = blockingCredentials(project) {
+        if (host.isBlank()) return@blockingCredentials
         settings.upsert(host, auth.scheme, auth.username, auth.headerName)
         if (auth.secret.isBlank()) {
             PasswordSafe.instance.set(attributes(host), null)
@@ -67,7 +71,7 @@ internal class PasswordSafeAuthenticator(
         }
     }
 
-    override fun remove(host: String) {
+    override fun remove(host: String) = blockingCredentials(project) {
         settings.remove(host)
         PasswordSafe.instance.set(attributes(host), null)
     }
@@ -79,7 +83,7 @@ internal class PasswordSafeAuthenticator(
     ): RepositoryAuth? {
         val initial = previous ?: stored(host)
         return withContext(Dispatchers.EDT) {
-            val dialog = RepositoryAuthDialog(project, host, reason, initial)
+            val dialog = RepositoryAuthDialog(project, host, reason, initial, hostLocked = reason.isNotBlank())
             if (!dialog.showAndGet()) return@withContext null
             val auth = dialog.result() ?: return@withContext null
             val targetHost = dialog.host().ifBlank { host }

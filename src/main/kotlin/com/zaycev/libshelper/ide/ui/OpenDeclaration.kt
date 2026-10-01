@@ -1,17 +1,16 @@
 package com.zaycev.libshelper.ide.ui
 
-import com.intellij.openapi.fileEditor.OpenFileDescriptor
-import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.LocalFileSystem
 import com.zaycev.libshelper.core.inventory.moduleScriptCandidates
 import com.zaycev.libshelper.core.model.DeclaredDependency
-import java.nio.file.Path
+import com.zaycev.libshelper.ide.LibsHelperService
+import com.zaycev.libshelper.ide.project.primaryGradleRoot
 
 internal fun openModuleGradle(project: Project, moduleId: String) {
-    val root = project.basePath ?: return
+    val root = primaryGradleRoot(project) ?: return
     val relative = moduleScriptCandidates(moduleId).firstOrNull { candidate ->
-        Path.of(root, candidate).toFile().isFile
+        root.resolve(candidate).toFile().isFile
     } ?: return
     openDeclaration(project, relative, line = null, token = null)
 }
@@ -31,16 +30,5 @@ internal fun openDependencyUsage(project: Project, dependency: DeclaredDependenc
 }
 
 private fun openDeclaration(project: Project, relativePath: String, line: Int?, token: String?) {
-    val root = project.basePath ?: return
-    val ioFile = Path.of(root, relativePath).toFile()
-    val virtual = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(ioFile) ?: return
-    val descriptor = if (line != null && line > 0) {
-        OpenFileDescriptor(project, virtual, line - 1, 0)
-    } else {
-        val text = String(virtual.contentsToByteArray())
-        val needle = token?.takeIf { it.isNotBlank() }
-        val offset = needle?.let { text.indexOf(it) }?.takeIf { it >= 0 } ?: 0
-        OpenFileDescriptor(project, virtual, offset)
-    }
-    FileEditorManager.getInstance(project).openTextEditor(descriptor, true)
+    project.service<LibsHelperService>().openRelative(relativePath, line, token)
 }

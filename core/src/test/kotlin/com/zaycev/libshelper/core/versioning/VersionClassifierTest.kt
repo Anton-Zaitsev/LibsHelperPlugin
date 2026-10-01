@@ -77,4 +77,38 @@ class VersionClassifierTest {
         assertNotNull(latest.rc)
         assertEquals(VersionChannel.ReleaseCandidate, classifyVersion(checkNotNull(latest.rc).raw))
     }
+
+    @Test
+    fun rangesAreNotStable() {
+        assertNull(classifyVersion("[1.0,2.0)"))
+        assertNull(classifyVersion("(,2.0]"))
+    }
+
+    @Test
+    fun devAndEapAreTheirOwnChannel() {
+        assertEquals(VersionChannel.Dev, classifyVersion("1.9.0+dev1234"))
+        assertEquals(VersionChannel.Dev, classifyVersion("1.9.0-dev-1234"))
+        assertEquals(VersionChannel.Dev, classifyVersion("2.0.0-eap"))
+    }
+
+    @Test
+    fun mavenOrderingMatchesComparableVersion() {
+        assertEquals(0, MavenVersion.parse("1").compareTo(MavenVersion.parse("1.0.0")))
+        assertEquals(0, MavenVersion.parse("1.0.0.Final").compareTo(MavenVersion.parse("1.0.0")))
+        assertEquals(0, MavenVersion.parse("1.0-ga").compareTo(MavenVersion.parse("1.0")))
+        assertEquals(0, MavenVersion.parse("1.0-RC1").compareTo(MavenVersion.parse("1.0-rc1")))
+        assertTrue(MavenVersion.parse("1.0-SNAPSHOT") < MavenVersion.parse("1.0"))
+        assertTrue(MavenVersion.parse("1.0") < MavenVersion.parse("1.0-sp1"))
+        val huge = "1." + "9".repeat(20)
+        val smaller = "1." + "8".repeat(20)
+        assertTrue(MavenVersion.parse(smaller) < MavenVersion.parse(huge))
+    }
+
+    @Test
+    fun qualifierAliasesCompareEqual() {
+        assertEquals(0, MavenVersion.parse("1.0-a1").compareTo(MavenVersion.parse("1.0-alpha1")))
+        assertEquals(0, MavenVersion.parse("1.0-b2").compareTo(MavenVersion.parse("1.0-beta2")))
+        assertEquals(0, MavenVersion.parse("1.0-cr1").compareTo(MavenVersion.parse("1.0-rc1")))
+        assertTrue(MavenVersion.parse("1.0.0-alpha10") > MavenVersion.parse("1.0.0-alpha9"))
+    }
 }

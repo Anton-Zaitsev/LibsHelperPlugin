@@ -28,7 +28,6 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
@@ -61,9 +60,7 @@ fun LibsHelperApp(project: Project, modifier: Modifier = Modifier) {
     var state by remember { mutableStateOf(service.state) }
     DisposableEffect(service) {
         val listener = AdvisorListener { next ->
-            ApplicationManager.getApplication().invokeLater {
-                if (!project.isDisposed) state = next
-            }
+            service.launchEdt { state = next }
         }
         service.addListener(listener)
         onDispose { service.removeListener(listener) }
@@ -213,8 +210,11 @@ private fun ReadyPane(
     var graphFullscreen by remember { mutableStateOf(false) }
     DisposableEffect(service) {
         val listener = AdvisorListener {
-            ApplicationManager.getApplication().invokeLater {
-                if (project.isDisposed) return@invokeLater
+            service.launchEdt {
+                service.consumeListQuery()?.let { query ->
+                    searchState.edit { replace(0, length, query) }
+                    outdatedOnly = false
+                }
                 selectedKey = service.selectedKey
                 if (service.consumeUpdatesTabRequest()) {
                     tab = AppTab.Updates
@@ -268,19 +268,18 @@ private fun ReadyPane(
                         selectedKey = key
                         service.selectedKey = key
                     },
-                    onApply = { dependency, version -> service.applyVersion(dependency, version) },
+                    onApply = { dependency, version -> service.enqueueApply(dependency, version) },
                 )
                 AppTab.Libraries -> LibrariesScreen(report, wide, onOpenLibrary = { key ->
-                    selectedKey = key
-                    service.selectedKey = key
+                    service.selectLibrary(key)
                     tab = AppTab.Updates
                 })
                 AppTab.Analytics -> AnalyticsScreen(
+                    project = project,
                     report = report,
                     wide = wide,
                     onOpenLibrary = { key ->
-                        selectedKey = key
-                        service.selectedKey = key
+                        service.selectLibrary(key)
                         tab = AppTab.Updates
                     },
                     onOpenFullscreenGraph = { graphFullscreen = true },
@@ -305,6 +304,7 @@ private fun ReadyPane(
                     },
             ) {
                 ModuleGraphView(
+                    project = project,
                     map = report.moduleMap,
                     fullscreen = true,
                     onToggleFullscreen = { graphFullscreen = false },

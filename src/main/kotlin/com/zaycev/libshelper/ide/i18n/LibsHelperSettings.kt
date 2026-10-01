@@ -13,12 +13,20 @@ import com.intellij.openapi.components.RoamingType
 class LibsHelperSettings : PersistentStateComponent<LibsHelperSettings.State> {
     class State {
         var language: String = AppLanguage.Default.name
+        var verboseLog: Boolean = false
     }
 
     private var stored = State()
 
     val language: AppLanguage
         get() = AppLanguage.fromStored(stored.language)
+
+    val verboseLog: Boolean
+        get() = stored.verboseLog
+
+    fun setVerboseLog(value: Boolean) {
+        stored.verboseLog = value
+    }
 
     fun setLanguage(value: AppLanguage) {
         if (stored.language == value.name) return

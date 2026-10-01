@@ -12,17 +12,18 @@ data class CameraFrame(
 )
 
 object GraphMetrics {
-    const val CARD_W = 248f
-    const val CARD_H = 72f
-    const val X_GAP = 280f
-    const val Y_GAP = 156f
-    const val EDGE_STUB = 20f
+    const val CARD_W = GraphScheme.CARD_WIDTH
+    const val CARD_H = GraphScheme.CARD_HEIGHT
+    const val X_GAP = GraphScheme.COLUMN_PITCH
+    const val Y_GAP = GraphScheme.ROW_PITCH
+    const val CARD_GAP = GraphScheme.COLUMN_GAP
+    const val EDGE_STUB = GraphScheme.EDGE_STUB
     const val MIN_SCALE = 0.06f
     const val MAX_SCALE = 3.5f
     const val FIT_PAD = 0.88f
     const val FIT_MAX = 1.35f
     const val ZOOM_SENSITIVITY = 0.055f
-    const val PAN_GAIN = 1.45f
+    const val PAN_GAIN = 1f
     const val SCROLL_CLAMP = 6f
     const val BUTTON_ZOOM = 1.25f
     const val DOUBLE_CLICK_ZOOM = 1.75f
@@ -44,10 +45,12 @@ fun worldFromScreen(
     camX: Float,
     camY: Float,
     scale: Float,
-): Pair<Float, Float> {
+): GraphPoint {
     val safeScale = scale.coerceAtLeast(GraphMetrics.MIN_SCALE)
-    return (screenX - viewW * HALF) / safeScale + camX to
-        (screenY - viewH * HALF) / safeScale + camY
+    return GraphPoint(
+        x = (screenX - viewW * HALF) / safeScale + camX,
+        y = (screenY - viewH * HALF) / safeScale + camY,
+    )
 }
 
 fun screenFromWorld(
@@ -58,13 +61,16 @@ fun screenFromWorld(
     camX: Float,
     camY: Float,
     scale: Float,
-): Pair<Float, Float> {
+): GraphPoint {
     val safeScale = scale.coerceAtLeast(GraphMetrics.MIN_SCALE)
-    return (worldX - camX) * safeScale + viewW * HALF to
-        (worldY - camY) * safeScale + viewH * HALF
+    return GraphPoint(
+        x = (worldX - camX) * safeScale + viewW * HALF,
+        y = (worldY - camY) * safeScale + viewH * HALF,
+    )
 }
 
 fun zoomFactorFromScroll(deltaY: Float): Float {
+    if (!deltaY.isFinite()) return 1f
     val clamped = deltaY.coerceIn(-GraphMetrics.SCROLL_CLAMP, GraphMetrics.SCROLL_CLAMP)
     return exp(-clamped * GraphMetrics.ZOOM_SENSITIVITY)
 }
@@ -79,11 +85,13 @@ fun zoomCamera(
     scale: Float,
     factor: Float,
 ): CameraFrame {
+    val current = scale.takeIf { it.isFinite() } ?: GraphMetrics.MIN_SCALE
+    val safeFactor = factor.takeIf { it.isFinite() && it > 0f } ?: 1f
     if (viewW < MIN_VIEW || viewH < MIN_VIEW) {
-        return CameraFrame(camX, camY, scale.coerceIn(GraphMetrics.MIN_SCALE, GraphMetrics.MAX_SCALE))
+        return CameraFrame(camX, camY, current.coerceIn(GraphMetrics.MIN_SCALE, GraphMetrics.MAX_SCALE))
     }
-    val (worldX, worldY) = worldFromScreen(pivotX, pivotY, viewW, viewH, camX, camY, scale)
-    val next = (scale * factor).coerceIn(GraphMetrics.MIN_SCALE, GraphMetrics.MAX_SCALE)
+    val (worldX, worldY) = worldFromScreen(pivotX, pivotY, viewW, viewH, camX, camY, current)
+    val next = (current * safeFactor).coerceIn(GraphMetrics.MIN_SCALE, GraphMetrics.MAX_SCALE)
     return CameraFrame(
         x = worldX - (pivotX - viewW * HALF) / next,
         y = worldY - (pivotY - viewH * HALF) / next,
@@ -104,6 +112,33 @@ fun panCamera(
         x = camX - deltaScreenX * gain,
         y = camY - deltaScreenY * gain,
         scale = safeScale,
+    )
+}
+
+fun panImageOffset(
+    originX: Float,
+    originY: Float,
+    camX: Float,
+    camY: Float,
+    scale: Float,
+    margin: Float,
+): GraphPoint = GraphPoint(
+    x = (originX - camX) * scale - margin,
+    y = (originY - camY) * scale - margin,
+)
+
+fun exportCamera(
+    minX: Float,
+    minY: Float,
+    maxX: Float,
+    maxY: Float,
+    pixelScale: Float,
+): CameraFrame {
+    val scale = pixelScale.takeIf { it.isFinite() && it > 0f } ?: 1f
+    return CameraFrame(
+        x = (minX + maxX) * HALF,
+        y = (minY + maxY) * HALF,
+        scale = scale,
     )
 }
 

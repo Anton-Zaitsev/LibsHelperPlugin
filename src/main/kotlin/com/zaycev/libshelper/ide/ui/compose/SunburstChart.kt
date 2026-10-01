@@ -73,6 +73,7 @@ fun SunburstChart(
                 .fillMaxWidth()
                 .height(280.dp),
         ) {
+            val scratch = remember { Path() }
             Canvas(
                 Modifier
                     .fillMaxSize()
@@ -108,6 +109,7 @@ fun SunburstChart(
                         center = center,
                         radius = radius,
                         progress = progress.value,
+                        scratch = scratch,
                     )
                 }
             }
@@ -140,13 +142,14 @@ private fun DrawScope.drawSlice(
     center: Offset,
     radius: Float,
     progress: Float,
+    scratch: Path,
 ) {
     val inner = radius * slice.inner
     val outer = radius * slice.outer
     val start = slice.startDeg
     val sweep = slice.sweepDeg * progress
     if (sweep <= 0f) return
-    val path = Path()
+    val path = scratch.apply { rewind() }
     val outerRect = Rect(center.x - outer, center.y - outer, center.x + outer, center.y + outer)
     val innerRect = Rect(center.x - inner, center.y - inner, center.x + inner, center.y + inner)
     path.moveTo(

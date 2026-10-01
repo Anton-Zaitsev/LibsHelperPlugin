@@ -8,6 +8,22 @@ import kotlin.test.assertTrue
 
 class GradleScriptParserTest {
     @Test
+    fun multilineLiteralIsReadAndCommentsAreIgnored() {
+        val script = """
+            dependencies {
+                implementation(
+                    "com.example:demo:1.2.3"
+                )
+                // implementation("com.example:commented:9.9.9")
+                /* implementation(libs.hidden) */
+            }
+        """.trimIndent()
+        val parsed = parseGradleScript(script, ":app", DependencySource.KotlinDsl, null)
+        assertEquals(listOf("demo"), parsed.dependencies.map { it.coordinates.artifact })
+        assertEquals(2, parsed.dependencies.single().usageLine)
+    }
+
+    @Test
     fun parsesCoordinatesReposAndSdk() {
         val script = """
             repositories {

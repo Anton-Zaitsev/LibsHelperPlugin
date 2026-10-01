@@ -20,9 +20,12 @@ data class MavenVersion(val raw: String) : Comparable<MavenVersion> {
 }
 
 sealed interface VersionToken : Comparable<VersionToken> {
-    data class Number(val value: Long) : VersionToken {
+    data class Number(val digits: String) : VersionToken {
+        val value: Long
+            get() = canonicalDigits(digits).toLongOrNull() ?: Long.MAX_VALUE
+
         override fun compareTo(other: VersionToken): Int = when (other) {
-            is Number -> value.compareTo(other.value)
+            is Number -> compareNumeric(digits, other.digits)
             is Qualifier -> if (other.isRelease) -1 else 1
         }
     }
@@ -45,14 +48,23 @@ internal const val RELEASE_RANK = 50
 internal const val SNAPSHOT_RANK = 45
 internal const val UNKNOWN_QUALIFIER_RANK = 35
 
-internal fun qualifierRank(name: String): Int = when (name) {
-    "alpha", "a" -> 10
-    "beta", "b" -> 20
-    "milestone", "m" -> 30
-    "rc", "cr" -> 40
+internal fun qualifierRank(name: String): Int = when (normalizeQualifier(name)) {
+    "alpha" -> 10
+    "beta" -> 20
+    "milestone" -> 30
+    "rc" -> 40
     "snapshot" -> SNAPSHOT_RANK
-    "ga", "final", "release", "sp" -> RELEASE_RANK
+    "sp" -> RELEASE_RANK
     else -> UNKNOWN_QUALIFIER_RANK
+}
+
+internal fun normalizeQualifier(name: String): String = when (name) {
+    "a" -> "alpha"
+    "b" -> "beta"
+    "m" -> "milestone"
+    "cr" -> "rc"
+    "final", "release" -> "ga"
+    else -> name
 }
 
 internal fun tokenize(raw: String): ImmutableList<VersionToken> {
@@ -61,14 +73,24 @@ internal fun tokenize(raw: String): ImmutableList<VersionToken> {
     val parts = cleaned.split(Regex("[.\\-_+]"))
         .flatMap { splitAlphaNumeric(it) }
         .filter { it.isNotBlank() }
-    return parts.map { part ->
-        val number = part.toLongOrNull()
-        if (number != null) {
-            VersionToken.Number(number)
+    return parts.mapNotNull { part ->
+        if (part.all { it.isDigit() }) {
+            VersionToken.Number(part)
         } else {
-            VersionToken.Qualifier(part.lowercase())
+            val qualifier = normalizeQualifier(part.lowercase())
+            if (qualifier == "ga") null else VersionToken.Qualifier(qualifier)
         }
     }.toPersistentList()
+}
+
+internal fun canonicalDigits(raw: String): String = raw.trimStart('0').ifEmpty { "0" }
+
+internal fun compareNumeric(left: String, right: String): Int {
+    val a = canonicalDigits(left)
+    val b = canonicalDigits(right)
+    val byLength = a.length.compareTo(b.length)
+    if (byLength != 0) return byLength
+    return a.compareTo(b)
 }
 
 private fun splitAlphaNumeric(value: String): List<String> {
@@ -91,8 +113,8 @@ private fun splitAlphaNumeric(value: String): List<String> {
 internal fun compareTokenLists(left: List<VersionToken>, right: List<VersionToken>): Int {
     val max = maxOf(left.size, right.size)
     for (i in 0 until max) {
-        val l = left.getOrNull(i) ?: VersionToken.Number(0)
-        val r = right.getOrNull(i) ?: VersionToken.Number(0)
+        val l = left.getOrNull(i) ?: VersionToken.Number("0")
+        val r = right.getOrNull(i) ?: VersionToken.Number("0")
         val cmp = l.compareTo(r)
         if (cmp != 0) return cmp
     }

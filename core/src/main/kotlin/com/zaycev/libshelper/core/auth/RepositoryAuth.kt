@@ -13,4 +13,7 @@ data class RepositoryAuth(
             RepositoryAuthScheme.Bearer -> secret.isBlank()
             RepositoryAuthScheme.Header -> headerName.isBlank() || secret.isBlank()
         }
+
+    override fun toString(): String =
+        "RepositoryAuth(scheme=$scheme, username=$username, headerName=$headerName, secret=***)"
 }

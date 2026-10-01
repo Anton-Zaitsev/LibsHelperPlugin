@@ -19,11 +19,16 @@ internal class StudioGitCredentialSource(
 
     fun stored(host: String): RepositoryAuth? {
         if (host.isBlank()) return null
-        cache[host]?.let { return it.auth }
+        val now = System.currentTimeMillis()
+        cache[host]?.takeIf { now - it.atMs < CACHE_TTL_MS }?.let { return it.auth }
         if (ApplicationManager.getApplication().isDispatchThread) return null
         val auth = lookup(host)
-        cache[host] = CacheEntry(auth)
+        cache[host] = CacheEntry(auth, now)
         return auth
+    }
+
+    fun clear() {
+        cache.clear()
     }
 
     private fun lookup(host: String): RepositoryAuth? {
@@ -43,9 +48,10 @@ internal class StudioGitCredentialSource(
         return null
     }
 
-    private data class CacheEntry(val auth: RepositoryAuth?)
+    private data class CacheEntry(val auth: RepositoryAuth?, val atMs: Long)
 
     private companion object {
         val LOG = Logger.getInstance(StudioGitCredentialSource::class.java)
+        const val CACHE_TTL_MS = 60_000L
     }
 }

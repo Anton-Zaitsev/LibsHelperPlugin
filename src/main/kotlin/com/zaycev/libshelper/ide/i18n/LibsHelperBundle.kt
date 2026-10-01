@@ -5,15 +5,12 @@ import java.text.MessageFormat
 import java.util.Locale
 import java.util.PropertyResourceBundle
 import java.util.ResourceBundle
+import kotlin.concurrent.atomics.AtomicReference
 
 object LibsHelperBundle {
     const val BUNDLE: String = "messages.LibsHelperBundle"
 
-    @Volatile
-    private var cached: ResourceBundle? = null
-
-    @Volatile
-    private var cachedLocale: Locale? = null
+    private val cache = AtomicReference<BundleCache?>(null)
 
     fun message(key: String, vararg params: Any): String {
         val pattern = runCatching { bundle().getString(key) }.getOrDefault(key)
@@ -21,8 +18,7 @@ object LibsHelperBundle {
     }
 
     fun clearCache() {
-        cached = null
-        cachedLocale = null
+        cache.store(null)
         ResourceBundle.clearCache()
     }
 
@@ -37,13 +33,17 @@ object LibsHelperBundle {
 
     private fun bundle(): ResourceBundle {
         val locale = currentLocale()
-        val hit = cached
-        if (hit != null && cachedLocale == locale) return hit
+        val hit = cache.load()
+        if (hit != null && hit.locale == locale) return hit.bundle
         val loaded = ResourceBundle.getBundle(BUNDLE, locale, Utf8Control)
-        cached = loaded
-        cachedLocale = locale
+        cache.store(BundleCache(loaded, locale))
         return loaded
     }
+
+    private data class BundleCache(
+        val bundle: ResourceBundle,
+        val locale: Locale,
+    )
 
     private object Utf8Control : ResourceBundle.Control() {
         override fun getFallbackLocale(baseName: String, locale: Locale): Locale? = null

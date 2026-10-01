@@ -7,7 +7,10 @@ internal fun parseHttpUri(url: String): URI? {
     val scheme = uri.scheme?.lowercase() ?: return null
     if (scheme != HTTPS && scheme != HTTP) return null
     if (uri.host.isNullOrBlank()) return null
-    return uri
+    if (uri.userInfo == null) return uri
+    return runCatching {
+        URI(scheme, null, uri.host, uri.port, uri.path, uri.query, uri.fragment)
+    }.getOrNull()
 }
 
 private const val HTTPS = "https"

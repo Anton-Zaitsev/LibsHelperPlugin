@@ -2,19 +2,24 @@ package com.zaycev.libshelper.ide.apply
 
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
-import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.application.readAction
+import com.intellij.openapi.command.writeCommandAction
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.zaycev.libshelper.ide.project.primaryGradleRoot
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.zaycev.libshelper.core.inventory.VersionPatchTarget
 import com.zaycev.libshelper.core.inventory.applyVersionPatch
 import com.zaycev.libshelper.core.inventory.isSafeVersionToken
+import com.zaycev.libshelper.core.inventory.safeProjectFile
 import com.zaycev.libshelper.core.inventory.versionPatchTarget
 import com.zaycev.libshelper.core.model.DeclaredDependency
 import com.zaycev.libshelper.ide.i18n.msg
-import java.nio.file.Path
 
-fun applyLibraryVersion(
+@Suppress("InjectDispatcher")
+suspend fun applyLibraryVersion(
     project: Project,
     dependency: DeclaredDependency,
     newVersion: String,
@@ -34,18 +39,23 @@ fun applyLibraryVersion(
         is VersionPatchTarget.GradleLiteral -> target.scriptPath
         VersionPatchTarget.Unsupported -> return false
     }
-    val root = project.basePath ?: return fail(project)
+    val root = primaryGradleRoot(project)?.toString() ?: return fail(project)
     val file = safeProjectFile(root, relative) ?: return fail(project)
-    val virtual = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file.toFile()) ?: return fail(project)
-    val document = FileDocumentManager.getInstance().getDocument(virtual) ?: return fail(project)
-    val patched = applyVersionPatch(document.text, target, newVersion) ?: return fail(project)
-    if (patched == document.text) return true
-    WriteCommandAction.writeCommandAction(project)
-        .withName(msg("action.apply"))
-        .run<RuntimeException> {
-            document.replaceString(0, document.textLength, patched)
+    val virtual = withContext(Dispatchers.IO) {
+        LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file.toFile())
+    } ?: return fail(project)
+    val document = readAction { FileDocumentManager.getInstance().getDocument(virtual) } ?: return fail(project)
+    var applied = false
+    writeCommandAction(project, msg("action.apply")) {
+        val current = document.text
+        val patched = applyVersionPatch(current, target, newVersion) ?: return@writeCommandAction
+        if (patched != current) {
+            replaceChangedRange(document, current, patched)
             FileDocumentManager.getInstance().saveDocument(document)
         }
+        applied = true
+    }
+    if (!applied) return fail(project)
     val from = dependency.requestedVersion ?: dependency.coordinates.artifact
     notify(project, msg("action.apply.done", from, newVersion), NotificationType.INFORMATION)
     return true
@@ -54,16 +64,24 @@ fun applyLibraryVersion(
 fun canApplyLibraryVersion(dependency: DeclaredDependency): Boolean =
     versionPatchTarget(dependency) !is VersionPatchTarget.Unsupported
 
+private fun replaceChangedRange(document: com.intellij.openapi.editor.Document, current: String, patched: String) {
+    var prefix = 0
+    val shared = minOf(current.length, patched.length)
+    while (prefix < shared && current[prefix] == patched[prefix]) prefix++
+    var suffix = 0
+    while (
+        suffix < current.length - prefix &&
+        suffix < patched.length - prefix &&
+        current[current.length - 1 - suffix] == patched[patched.length - 1 - suffix]
+    ) {
+        suffix++
+    }
+    document.replaceString(prefix, current.length - suffix, patched.substring(prefix, patched.length - suffix))
+}
+
 private fun fail(project: Project): Boolean {
     notify(project, msg("action.apply.failed"), NotificationType.WARNING)
     return false
-}
-
-private fun safeProjectFile(root: String, relative: String): Path? {
-    val base = Path.of(root).toAbsolutePath().normalize()
-    val resolved = base.resolve(relative).normalize()
-    if (!resolved.startsWith(base)) return null
-    return resolved.takeIf { it.toFile().isFile }
 }
 
 private fun notify(project: Project, message: String, type: NotificationType) {

@@ -94,15 +94,14 @@ internal fun kotlinCompose(
     target: MavenVersion,
     inventory: ProjectInventory,
 ): ConflictSignal? {
-    val isCompose = dependency.coordinates.group.startsWith("androidx.compose") ||
-        dependency.coordinates.artifact.contains("compose", ignoreCase = true)
-    if (!isCompose) return null
+    val compiler = dependency.coordinates.group == "androidx.compose.compiler" ||
+        dependency.coordinates.group == "org.jetbrains.kotlin.plugin.compose" ||
+        dependency.coordinates.artifact == "kotlin-compose-compiler-plugin-embeddable"
+    if (!compiler) return null
     val kotlin = inventory.kotlinVersion ?: return null
-    val kotlinMajorMinor = kotlin.substringBeforeLast('.').toDoubleOrNull()
-        ?: kotlin.take(3).toDoubleOrNull()
-        ?: return null
+    val kotlinMajorMinor = kotlinRelease(kotlin) ?: return null
     val composeMajor = (target.tokens.firstOrNull() as? VersionToken.Number)?.value ?: return null
-    if (composeMajor >= 1 && kotlinMajorMinor < 2.0) {
+    if (composeMajor >= 2 && kotlinMajorMinor.first < 2) {
         return ConflictSignal(
             type = ConflictType.KotlinCompose,
             severity = Severity.High,
@@ -184,6 +183,15 @@ internal fun bomFamilyOf(coordinates: Coordinates): String? = when {
 internal fun isLegacySupport(coordinates: Coordinates): Boolean =
     coordinates.group.startsWith("com.android.support") ||
         coordinates.group.startsWith("android.arch")
+
+internal fun kotlinRelease(raw: String): Pair<Int, Int>? {
+    val match = KOTLIN_RELEASE.find(raw) ?: return null
+    val major = match.groupValues[1].toIntOrNull() ?: return null
+    val minor = match.groupValues[2].toIntOrNull() ?: return null
+    return major to minor
+}
+
+private val KOTLIN_RELEASE = Regex("""(\d+)\.(\d+)""")
 
 internal fun requiredMinSdk(coordinates: Coordinates, target: MavenVersion): Int? {
     if (coordinates.group.startsWith("androidx.activity") || coordinates.group.startsWith("androidx.fragment")) {

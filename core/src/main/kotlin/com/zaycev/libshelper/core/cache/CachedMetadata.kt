@@ -12,4 +12,5 @@ data class CachedMetadata(
     val originUrl: String,
     val storedAtEpochMs: Long,
     val usedProxyFallback: Boolean,
+    val negative: Boolean = false,
 )
